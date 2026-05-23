@@ -2,7 +2,7 @@
 
 **Current version:** 0.1.0 (MVP)
 **Last updated:** May 2026
-**Status:** Core CLI, manifest engine, W3C PROV graph, and `.rpk` packaging are functional. Ready for early adopters and community feedback.
+**Status:** Core CLI, manifest engine, W3C PROV graph, `.rpk` packaging, `inspect`, `validate`, and real-world fixtures are complete. 106 tests passing.
 
 ---
 
@@ -10,81 +10,85 @@
 
 The foundation is solid, tested, and installable. All items below are complete and verified in CI.
 
-- [x] **CLI framework** with Typer: `capture`, `run`, `graph`, `version`
+- [x] **CLI framework** with Typer: `capture`, `run`, `graph`, `inspect`, `validate`, `version`
 - [x] **Pydantic + YAML manifest** (`repropack.yml`) with automatic/manual steps
 - [x] **Strict Dockerfile generation** with base-image digests and `--require-hashes`
 - [x] **W3C PROV provenance graph** via the `prov` library and NetworkX
-- [x] **Graph exports**: DOT, Mermaid, and self-contained HTML
+- [x] **Graph exports**: DOT, Mermaid, self-contained HTML, PNG (Graphviz)
 - [x] **`.rpk` packaging** (internal ZIP format with `project/`, `Dockerfile`, `provenance.json`, `repropack.yml`)
 - [x] **Environment detection**: pip, Conda, Poetry
-- [x] **Lockfile generation**: `requirements.lock` (pip freeze fallback) and `conda-lock.yml`
-- [x] **Automatic step inference** from common script names (`prepare.py`, `train.py`, `evaluate.py`)
+- [x] **Lockfile generation**: `requirements.lock` (pip-compile preferred, pip freeze fallback with warning) and `conda-lock.yml`
+- [x] **Editable install detection** (`-e .`) in lockfiles with validation warnings
+- [x] **Automatic step inference** from common script names (`prepare.py`, `train.py`, `evaluate.py`), Jupyter notebooks (`.ipynb`), R scripts (`.R`), and shell scripts (`.sh`)
 - [x] **Manual step support** in manifest and CLI (`--skip-manual`, interactive prompts)
-- [x] **Rich terminal UI** with progress spinners and styled output
-- [x] **Test suite**: 18/18 tests passing (pytest + coverage)
-- [x] **Linting & formatting**: ruff, black, mypy, pre-commit hooks
+- [x] **Rich terminal UI** with progress spinners, styled output, tables, and panels
+- [x] **File-hash verification** (SHA256) on capture and reproduction
+- [x] **Test suite**: 106/106 tests passing (pytest + coverage)
+- [x] **Linting & formatting**: ruff, black, mypy strict, pre-commit hooks
 - [x] **CI/CD**: GitHub Actions workflow (Python 3.10–3.12)
-- [x] **Open source setup**: MIT `LICENSE`, `README.md`, `CONTRIBUTING.md`
+- [x] **Open source setup**: MIT `LICENSE`, `README.md`, `CONTRIBUTING.md`, issue/PR templates
 
 ---
 
 ## Development Phases
 
-### Phase 0: Preparation and Initial Release *(wrapping up)*
+### Phase 0: Preparation and Initial Release *(complete)*
 
-> Polish the MVP so early users can install from PyPI and reproduce real projects without friction.
+> Polish the MVP so early users can install from source and reproduce real projects without friction.
 
+- [x] Add a `Makefile` with common dev commands (`test`, `lint`, `format`, `clean`, `build`, `publish`)
+- [x] Create a `.github/ISSUE_TEMPLATE/` (bug report + feature request)
+- [x] Add `.github/PULL_REQUEST_TEMPLATE.md`
+- [x] Write a **quick-start tutorial** in `docs/tutorial.md`
+- [x] Tag `v0.1.0` and write release notes
 - [ ] Publish v0.1.0 to PyPI with `hatchling` build
-- [ ] Add a `Makefile` with common dev commands (`test`, `lint`, `format`, `clean`)
-- [ ] Create a `.github/ISSUE_TEMPLATE/` (bug report + feature request)
-- [ ] Add `.github/PULL_REQUEST_TEMPLATE.md`
-- [ ] Write a **quick-start tutorial** in `docs/tutorial.md`
 - [ ] Record a 2-minute GIF demo for the README
-- [ ] Tag `v0.1.0` and write release notes
 
 ---
 
-### Phase 1: Stabilization and Basic Reproducibility *(1–2 weeks)*
+### Phase 1: Stabilization and Basic Reproducibility *(complete)*
 
 > Harden the capture pipeline and make the first real-world reproductions reliable.
 
-- [ ] **Robust lockfile generation**
-  - [ ] Prefer `pip-compile --generate-hashes` when available
-  - [ ] Fallback to `pip freeze` with a warning about missing hashes
-  - [ ] Support `conda env export --no-builds` and `conda-lock` correctly
-  - [ ] Detect and warn about editable installs (`-e .`) in lockfiles
+- [x] **Robust lockfile generation**
+  - [x] Prefer `pip-compile --generate-hashes` when available
+  - [x] Fallback to `pip freeze` with a warning about missing hashes
+  - [x] Support `conda env export --no-builds` and `conda-lock` correctly
+  - [x] Detect and warn about editable installs (`-e .`) in lockfiles
+- [x] **Add `repropack inspect <file.rpk>`**
+  - [x] Pretty-print manifest metadata, steps, environment, file hashes, and ZIP tree
+- [x] **Add `repropack validate <file.rpk>`**
+  - [x] Check internal structure, schema validity, and file hashes
+  - [x] Warn about editable installs in lockfiles
+- [x] **File-hash verification on package creation**
+  - [x] Compute SHA256 for every file inside the `.rpk`
+  - [x] Store hashes in manifest for integrity checks
+- [x] **Improve automatic step inference**
+  - [x] Detect Jupyter notebooks (`.ipynb`) and generate `jupyter execute` steps
+  - [x] Detect R scripts (`.R`) and shell scripts (`.sh`)
+  - [ ] Parse `Makefile` targets and offer them as manual/automatic steps
+- [x] **End-to-end real-project tests**
+  - [x] A Jupyter-based machine-learning notebook fixture
+  - [x] A genomics pipeline fixture with Conda + R + shell scripts
+  - [ ] A physics simulation with Python + C++ extension
+- [x] **Better error handling**
+  - [x] Catch missing Docker daemon and suggest `--lite`
+  - [x] Validate that captured paths exist before writing the `.rpk`
+  - [x] Harden subprocess fallbacks for missing `pip-compile` / `conda`
 - [ ] **Resolve real Docker base-image SHA256 digests**
   - [ ] Query Docker Hub / registry API to pin exact digests at capture time
   - [ ] Allow users to override with `--base-image`
-- [ ] **Add `repropack inspect <file.rpk>`**
-  - [ ] Pretty-print manifest metadata, steps, and environment summary
-- [ ] **Add `repropack validate <file.rpk>`**
-  - [ ] Check internal structure, schema validity, and file hashes
-- [ ] **File-hash verification on package creation**
-  - [ ] Compute SHA256 for every file inside the `.rpk`
-  - [ ] Store hashes in manifest for integrity checks
-- [ ] **Improve automatic step inference**
-  - [ ] Detect Jupyter notebooks (`.ipynb`) and generate `jupyter execute` steps
-  - [ ] Detect R scripts (`.R`) and shell scripts (`.sh`)
-  - [ ] Parse `Makefile` targets and offer them as manual/automatic steps
-- [ ] **End-to-end real-project tests**
-  - [ ] A Jupyter-based machine-learning notebook
-  - [ ] A physics simulation with Python + C++ extension
-  - [ ] A genomics pipeline with Conda + R + shell scripts
-- [ ] **Better error handling**
-  - [ ] Catch missing Docker daemon and suggest Podman / Apptainer
-  - [ ] Validate that captured paths exist before writing the `.rpk`
 
 ---
 
-### Phase 2: Full Multi-language Support *(2–4 weeks)*
+### Phase 2: Full Multi-language Support *(next)*
 
 > ReproPack should feel native to researchers regardless of their language stack.
 
 - [ ] **R ecosystem support**
   - [ ] Detect `renv/` and generate `renv.lock`
   - [ ] Install R + renv in the Dockerfile
-  - [ ] Add R step inference (`script.R`, `run_analysis.R`)
+  - [x] Add R step inference (`script.R`, `run_analysis.R`)
 - [ ] **Julia ecosystem support**
   - [ ] Detect `Project.toml` and `Manifest.toml`
   - [ ] Install Julia + instantiate packages in Dockerfile
@@ -132,8 +136,8 @@ The foundation is solid, tested, and installable. All items below are complete a
   - [ ] Interactive HTML graph with pan/zoom (Mermaid or D3.js)
   - [ ] Export provenance as W3C PROV-XML
   - [ ] Link provenance to ORCID authors when available
-- [ ] **Lite mode (no container)**
-  - [ ] `repropack run --lite` executes steps directly in the current environment
+- [x] **Lite mode (no container)**
+  - [x] `repropack run --lite` executes steps directly in the current environment
   - [ ] Warn if Python version or packages mismatch the lockfile
 - [ ] **Performance profiling**
   - [ ] Optional `--profile` flag to record step duration and resource usage
