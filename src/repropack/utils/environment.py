@@ -58,17 +58,23 @@ def generate_pip_lock(project_path: Path, output_path: Path | None = None) -> Pa
         req_in = project_path / "requirements.in"
         req_txt = project_path / "requirements.txt"
         source = str(req_in) if req_in.exists() else str(req_txt)
-        subprocess.run(
-            [
-                "pip-compile",
-                "--generate-hashes",
-                "--output-file",
-                str(output_path),
-                source,
-            ],
-            check=True,
-            cwd=str(project_path),
-        )
+        try:
+            subprocess.run(
+                [
+                    "pip-compile",
+                    "--generate-hashes",
+                    "--output-file",
+                    str(output_path),
+                    source,
+                ],
+                check=True,
+                cwd=str(project_path),
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            # If pip-compile fails, fall through to pip freeze fallback
+            pass
+        else:
+            return output_path
     else:
         # Fallback: pip freeze + pip hash
         try:

@@ -40,8 +40,7 @@ def capture(
         help="Output path for the .rpk package",
         resolve_path=True,
     ),
-    manual_step: list[str]
-    | None = typer.Option(
+    manual_step: list[str] | None = typer.Option(
         None,
         "--manual-step",
         "-m",
@@ -78,8 +77,7 @@ def run(
         dir_okay=False,
         resolve_path=True,
     ),
-    tag: str
-    | None = typer.Option(
+    tag: str | None = typer.Option(
         None,
         "--tag",
         "-t",
@@ -90,10 +88,26 @@ def run(
         "--skip-manual",
         help="Skip manual steps during reproduction",
     ),
+    lite: bool = typer.Option(
+        False,
+        "--lite",
+        help="Run steps directly in the host environment without Docker",
+    ),
+    no_cache: bool = typer.Option(
+        False,
+        "--no-cache",
+        help="Disable Docker build cache",
+    ),
 ) -> None:
     """Reproduce a .rpk package."""
     try:
-        run_package(rpk, tag=tag, skip_manual=skip_manual)
+        run_package(
+            rpk,
+            tag=tag,
+            skip_manual=skip_manual,
+            lite=lite,
+            no_cache=no_cache,
+        )
     except Exception as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
