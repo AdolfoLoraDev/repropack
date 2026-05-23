@@ -95,8 +95,10 @@ class CaptureOrchestrator:
             self._lockfile_path = self._generate_lockfile(progress)
             manifest = self._build_manifest()
             dockerfile_content = self._generate_dockerfile(progress, manifest)
-            provenance = self._build_provenance(progress, manifest)
             file_hashes = self._compute_hashes(progress)
+            provenance = self._build_provenance(
+                progress, manifest, file_hashes=file_hashes
+            )
             # Inject hashes into the manifest before packaging
             manifest.file_hashes = file_hashes
             self._package(
@@ -205,12 +207,15 @@ class CaptureOrchestrator:
         return content
 
     def _build_provenance(
-        self, progress: Progress, manifest: ReproPackManifest
+        self,
+        progress: Progress,
+        manifest: ReproPackManifest,
+        file_hashes: dict[str, str],
     ) -> ProvenanceGraph:
         """Construct the W3C PROV graph."""
         task = progress.add_task("Building PROV graph...", total=None)
         prov = ProvenanceGraph()
-        prov.build_from_manifest(manifest)
+        prov.build_from_manifest(manifest, file_hashes=file_hashes)
         progress.update(task, completed=True)
         return prov
 
