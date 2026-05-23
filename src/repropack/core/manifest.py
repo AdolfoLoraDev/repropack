@@ -100,6 +100,9 @@ class ReproPackManifest(BaseModel):
     steps: list[Step] = Field(
         default_factory=list, description="Ordered reproduction steps"
     )
+    file_hashes: dict[str, str] = Field(
+        default_factory=dict, description="SHA256 hashes of project files"
+    )
     extra: dict[str, Any] = Field(
         default_factory=dict, description="Free-form extra fields"
     )
