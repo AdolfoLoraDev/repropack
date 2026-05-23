@@ -93,7 +93,7 @@ class ReproPackManifest(BaseModel):
     """Full manifest for a reproducible package."""
 
     repropack_version: str = Field(
-        default="0.1.0", description="ReproPack format version"
+        default="0.1.1", description="ReproPack format version"
     )
     metadata: Metadata = Field(..., description="Experiment metadata")
     environment: EnvironmentSpec = Field(..., description="Environment specification")

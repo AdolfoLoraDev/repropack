@@ -16,7 +16,8 @@
 - **W3C PROV provenance graph**: Tracks every step, file, and agent involved in the experiment.
 - **Declarative manifest**: Defines automatic and manual steps in `repropack.yml`.
 - **Single command**: Capture and reproduce complex experiments effortlessly.
-- **Multi-language**: Detects Python, Conda, R, Julia, and more.
+- **Multi-language**: Detects Python, Conda, R, shell, and Makefile targets.
+- **Real base-image digests**: Resolves SHA256 digests via `docker inspect` or Docker Hub API; override with `--base-image`.
 
 ## Installation
 
@@ -70,7 +71,7 @@ For a hands-on walkthrough from zero to a working `.rpk`, see the **[Quick-Start
 ## Example Manifest (repropack.yml)
 
 ```yaml
-repropack_version: "0.1.0"
+repropack_version: "0.1.1"
 metadata:
   name: "my_experiment"
   created_at: "2026-05-16T12:00:00Z"

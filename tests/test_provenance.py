@@ -95,7 +95,7 @@ class TestProvenanceGraphCreation:
     def test_add_agent(self) -> None:
         """add_agent must create a ProvAgent in the document."""
         prov = ProvenanceGraph()
-        agent = prov.add_agent("system", "ReproPack", version="0.1.0")
+        agent = prov.add_agent("system", "ReproPack", version="0.1.1")
         assert isinstance(agent, type(agent))  # ProvAgent
         data = prov.to_dict()
         assert "repropack:system" in str(data)
@@ -103,7 +103,7 @@ class TestProvenanceGraphCreation:
     def test_add_entity(self) -> None:
         """add_entity must create a ProvEntity."""
         prov = ProvenanceGraph()
-        prov.add_entity("manifest", "repropack.yml", version="0.1.0")
+        prov.add_entity("manifest", "repropack.yml", version="0.1.1")
         data = prov.to_dict()
         assert "repropack:manifest" in str(data)
 

@@ -9,6 +9,7 @@ final ZIP packaging.
 from __future__ import annotations
 
 import hashlib
+import re
 import shutil
 import tempfile
 import zipfile
@@ -18,7 +19,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from repropack.core.docker_generator import generate_dockerfile
+from repropack.core.docker_generator import generate_dockerfile, get_base_image_digest
 from repropack.core.manifest import (
     EnvironmentSpec,
     Metadata,
@@ -60,6 +61,7 @@ class CaptureOrchestrator:
         project_path: Path,
         output_path: Path,
         extra_steps: list[Step] | None = None,
+        base_image: str | None = None,
     ) -> None:
         """Initialize the orchestrator.
 
@@ -67,10 +69,12 @@ class CaptureOrchestrator:
             project_path: Path to the project folder to capture.
             output_path: Desired output path for the ``.rpk`` file.
             extra_steps: Optional additional manual/automatic steps to append.
+            base_image: Optional Docker base image override (e.g. ``python:3.11-slim``).
         """
         self.project_path = project_path.resolve()
         self.output_path = output_path.resolve()
         self.extra_steps = extra_steps or []
+        self.base_image_override = base_image
         self._env_type: EnvType | None = None
         self._lockfile_path: Path | None = None
 
@@ -177,8 +181,14 @@ class CaptureOrchestrator:
         if not python_req and (self.project_path / "requirements.txt").exists():
             python_req = "requirements.txt"
 
+        # Resolve base image with digest when possible
+        if self.base_image_override:
+            resolved_image = get_base_image_digest(self.base_image_override)
+        else:
+            resolved_image = get_base_image_digest("python:3.11-slim")
+
         environment = EnvironmentSpec(
-            base_image="python:3.11-slim@sha256:placeholder",
+            base_image=resolved_image,
             python_requirements=python_req,
             conda_environment=conda_env,
             system_packages=[],
@@ -281,6 +291,7 @@ class CaptureOrchestrator:
         - Jupyter notebooks: ``*.ipynb``
         - R scripts: ``*.R``
         - Shell scripts: ``*.sh``
+        - Makefile targets
         """
         steps: list[Step] = []
         candidates: list[tuple[str, list[str]]] = [
@@ -335,6 +346,20 @@ class CaptureOrchestrator:
                 )
             )
 
+        # Makefile targets
+        makefile = self.project_path / "Makefile"
+        if makefile.exists():
+            targets = _parse_makefile_targets(makefile)
+            for target in targets:
+                steps.append(
+                    Step(
+                        id=f"make_{target}",
+                        type=StepType.AUTOMATIC,
+                        command=f"make {target}",
+                        description=f"Detected Makefile target: {target}",
+                    )
+                )
+
         return steps
 
 
@@ -347,6 +372,7 @@ def capture_project(
     project_path: Path,
     output_path: Path,
     extra_steps: list[Step] | None = None,
+    base_image: str | None = None,
 ) -> Path:
     """Capture a complete project into a ``.rpk`` package.
 
@@ -356,6 +382,7 @@ def capture_project(
         project_path: Path to the project folder.
         output_path: Output path for the ``.rpk`` file.
         extra_steps: Additional steps to include in the manifest.
+        base_image: Optional Docker base image override.
 
     Returns:
         Path to the generated ``.rpk`` file.
@@ -364,6 +391,7 @@ def capture_project(
         project_path=project_path,
         output_path=output_path,
         extra_steps=extra_steps,
+        base_image=base_image,
     )
     return orchestrator.run()
 
@@ -385,3 +413,37 @@ def _file_hash(path: Path) -> str:
     h = hashlib.sha256()
     h.update(path.read_bytes())
     return h.hexdigest()
+
+
+def _parse_makefile_targets(path: Path) -> list[str]:
+    """Extract target names from a Makefile.
+
+    Parses lines that look like ``target: dependencies`` while ignoring
+    common non-target patterns (e.g. ``.PHONY``, variable assignments,
+    conditional directives).
+
+    Args:
+        path: Path to the Makefile.
+
+    Returns:
+        Ordered list of target names.
+    """
+    targets: list[str] = []
+    target_pattern = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_\-]*)\s*:")
+    ignore_pattern = re.compile(r"^\s*[.#]|:=|\+=|\?=|!=|^\s*if|^\s*else|^\s*endif")
+
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if line.startswith((" ", "\t")):
+            continue
+        if stripped.startswith(("#", ".")):
+            continue
+        if ignore_pattern.search(stripped):
+            continue
+        match = target_pattern.match(stripped)
+        if match:
+            targets.append(match.group(1))
+
+    return targets

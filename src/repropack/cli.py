@@ -48,6 +48,12 @@ def capture(
         "-m",
         help="Add a manual step to the manifest (can be repeated).",
     ),
+    base_image: str | None = typer.Option(
+        None,
+        "--base-image",
+        "-b",
+        help="Override the Docker base image (e.g. python:3.11-slim).",
+    ),
 ) -> None:
     """Capture a project into a reproducible .rpk package."""
     extra_steps: list[Step] = []
@@ -63,7 +69,12 @@ def capture(
             )
 
     try:
-        result = capture_project(project, output, extra_steps=extra_steps or None)
+        result = capture_project(
+            project,
+            output,
+            extra_steps=extra_steps or None,
+            base_image=base_image,
+        )
         console.print(f"[bold green]Success:[/bold green] {result}")
     except Exception as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")

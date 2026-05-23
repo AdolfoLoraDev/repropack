@@ -74,3 +74,33 @@ class TestCondaRFixture:
     def test_detects_conda(self) -> None:
         """Fixture must be detected as conda."""
         assert detect_env_type(FIXTURES / "conda_r_bio") == "conda"
+
+
+class TestPhysicsFixture:
+    """End-to-end with a Python + C++ extension project."""
+
+    def test_capture_physics_project(self, tmp_path: Path) -> None:
+        """Must detect Makefile targets and infer make steps."""
+        project = FIXTURES / "physics_simulation"
+        output = tmp_path / "physics.rpk"
+        result = capture_project(project, output)
+        assert result.exists()
+
+        with zipfile.ZipFile(result, "r") as zf:
+            manifest_text = zf.read("repropack.yml").decode("utf-8")
+            manifest = ReproPackManifest.from_yaml(manifest_text)
+
+        # Should infer Makefile targets
+        make_steps = [
+            s
+            for s in manifest.steps
+            if s.type == StepType.AUTOMATIC and "make" in (s.command or "")
+        ]
+        assert len(make_steps) >= 1
+        step_ids = [s.id for s in make_steps]
+        assert "make_build" in step_ids
+        assert "make_run" in step_ids
+
+    def test_detects_pip(self) -> None:
+        """Fixture must be detected as pip."""
+        assert detect_env_type(FIXTURES / "physics_simulation") == "pip"

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "repropack"
-version = "0.1.0"
+version = "0.1.1"
 description = "Open-source CLI tool to create reproducible research packages (.rpk) with frozen environments, W3C PROV provenance, and Docker automation."
 readme = "README.md"
 license = {text = "MIT"}

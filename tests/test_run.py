@@ -116,6 +116,15 @@ def fake_docker(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("repropack.core.run.shutil.which", lambda x: "/usr/bin/docker")
 
 
+@pytest.fixture(autouse=True)  # type: ignore[misc]
+def _patch_digest_for_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent network/docker calls during capture in run tests."""
+    monkeypatch.setattr(
+        "repropack.core.capture.get_base_image_digest",
+        lambda img: f"{img}@sha256:fakedigest",
+    )
+
+
 # =====================================================================
 # Validation
 # =====================================================================

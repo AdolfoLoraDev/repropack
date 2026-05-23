@@ -1,8 +1,8 @@
 # ReproPack Roadmap
 
-**Current version:** 0.1.0 (MVP)
+**Current version:** 0.1.1 (MVP)
 **Last updated:** May 2026
-**Status:** Core CLI, manifest engine, W3C PROV graph, `.rpk` packaging, `inspect`, `validate`, and real-world fixtures are complete. 106 tests passing.
+**Status:** Core CLI, manifest engine, W3C PROV graph, `.rpk` packaging, `inspect`, `validate`, and real-world fixtures are complete. 110+ tests passing.
 
 ---
 
@@ -23,7 +23,7 @@ The foundation is solid, tested, and installable. All items below are complete a
 - [x] **Manual step support** in manifest and CLI (`--skip-manual`, interactive prompts)
 - [x] **Rich terminal UI** with progress spinners, styled output, tables, and panels
 - [x] **File-hash verification** (SHA256) on capture and reproduction
-- [x] **Test suite**: 106/106 tests passing (pytest + coverage)
+- [x] **Test suite**: 110+ tests passing (pytest + coverage)
 - [x] **Linting & formatting**: ruff, black, mypy strict, pre-commit hooks
 - [x] **CI/CD**: GitHub Actions workflow (Python 3.10–3.12)
 - [x] **Open source setup**: MIT `LICENSE`, `README.md`, `CONTRIBUTING.md`, issue/PR templates
@@ -41,8 +41,8 @@ The foundation is solid, tested, and installable. All items below are complete a
 - [x] Add `.github/PULL_REQUEST_TEMPLATE.md`
 - [x] Write a **quick-start tutorial** in `docs/tutorial.md`
 - [x] Tag `v0.1.0` and write release notes
-- [ ] Publish v0.1.0 to PyPI with `hatchling` build
-- [ ] Record a 2-minute GIF demo for the README
+- [x] Publish v0.1.0 to PyPI with `hatchling` build
+- [x] Record a 2-minute GIF demo for the README
 
 ---
 
@@ -66,18 +66,18 @@ The foundation is solid, tested, and installable. All items below are complete a
 - [x] **Improve automatic step inference**
   - [x] Detect Jupyter notebooks (`.ipynb`) and generate `jupyter execute` steps
   - [x] Detect R scripts (`.R`) and shell scripts (`.sh`)
-  - [ ] Parse `Makefile` targets and offer them as manual/automatic steps
+  - [x] Parse `Makefile` targets and offer them as manual/automatic steps
 - [x] **End-to-end real-project tests**
   - [x] A Jupyter-based machine-learning notebook fixture
   - [x] A genomics pipeline fixture with Conda + R + shell scripts
-  - [ ] A physics simulation with Python + C++ extension
+  - [x] A physics simulation with Python + C++ extension
 - [x] **Better error handling**
   - [x] Catch missing Docker daemon and suggest `--lite`
   - [x] Validate that captured paths exist before writing the `.rpk`
   - [x] Harden subprocess fallbacks for missing `pip-compile` / `conda`
-- [ ] **Resolve real Docker base-image SHA256 digests**
-  - [ ] Query Docker Hub / registry API to pin exact digests at capture time
-  - [ ] Allow users to override with `--base-image`
+- [x] **Resolve real Docker base-image SHA256 digests**
+  - [x] Query Docker Hub / registry API to pin exact digests at capture time
+  - [x] Allow users to override with `--base-image`
 
 ---
 

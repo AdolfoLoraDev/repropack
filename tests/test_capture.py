@@ -12,9 +12,10 @@ import pytest
 from repropack.core.capture import (
     CaptureOrchestrator,
     _file_hash,
+    _parse_makefile_targets,
     capture_project,
 )
-from repropack.core.docker_generator import generate_dockerfile
+from repropack.core.docker_generator import generate_dockerfile, get_base_image_digest
 from repropack.core.manifest import (
     EnvironmentSpec,
     Metadata,
@@ -290,12 +291,12 @@ class TestSnapshotManifest:
             yaml_text = zf.read("repropack.yml").decode("utf-8")
 
         assert "repropack_version:" in yaml_text
-        assert "0.1.0" in yaml_text
+        assert "0.1.1" in yaml_text
         assert "metadata:" in yaml_text
         assert "name: basic_project" in yaml_text
         assert "environment:" in yaml_text
         assert "base_image:" in yaml_text
-        assert "python:3.11-slim@sha256:placeholder" in yaml_text
+        assert "python:3.11-slim@sha256:" in yaml_text
         assert "steps:" in yaml_text
 
     def test_dockerfile_snapshot(self, tmp_path: Path) -> None:
@@ -307,7 +308,7 @@ class TestSnapshotManifest:
         with zipfile.ZipFile(output, "r") as zf:
             dockerfile = zf.read("Dockerfile").decode("utf-8")
 
-        assert "FROM python:3.11-slim@sha256:placeholder" in dockerfile
+        assert "FROM python:3.11-slim@sha256:" in dockerfile
         assert "DEBIAN_FRONTEND=noninteractive" in dockerfile
         assert "RUN groupadd -r repro" in dockerfile
         assert (
@@ -562,3 +563,81 @@ class TestFileHashUtility:
         f.write_text("reproducibility matters")
         expected = hashlib.sha256(f.read_bytes()).hexdigest()
         assert _file_hash(f) == expected
+
+
+# =====================================================================
+# Makefile parsing
+# =====================================================================
+
+
+class TestMakefileParsing:
+    """Tests for Makefile target extraction."""
+
+    def test_parses_simple_targets(self, tmp_path: Path) -> None:
+        """Must extract standard target names."""
+        mf = tmp_path / "Makefile"
+        mf.write_text(
+            "build:\n\tgcc main.c -o main\n\n"
+            "run: build\n\t./main\n\n"
+            "clean:\n\trm -f main\n"
+        )
+        targets = _parse_makefile_targets(mf)
+        assert targets == ["build", "run", "clean"]
+
+    def test_ignores_comments_and_variables(self, tmp_path: Path) -> None:
+        """Must skip comments, variable assignments, and directives."""
+        mf = tmp_path / "Makefile"
+        mf.write_text(
+            "# Comment line\n"
+            "CC := gcc\n"
+            "CFLAGS ?= -O2\n"
+            "build:\n\t$(CC) main.c\n"
+        )
+        targets = _parse_makefile_targets(mf)
+        assert targets == ["build"]
+
+    def test_ignores_indented_lines(self, tmp_path: Path) -> None:
+        """Indented recipe lines must not be treated as targets."""
+        mf = tmp_path / "Makefile"
+        mf.write_text("all:\n" "\tgcc main.c\n" "\trun: should_be_ignored\n")
+        targets = _parse_makefile_targets(mf)
+        assert targets == ["all"]
+
+
+# =====================================================================
+# Base image digest resolution
+# =====================================================================
+
+
+class TestBaseImageDigest:
+    """Tests for get_base_image_digest."""
+
+    def test_returns_unchanged_if_already_has_digest(self) -> None:
+        """If the image already contains @sha256:, return as-is."""
+        pinned = "python:3.11-slim@sha256:abc123"
+        assert get_base_image_digest(pinned) == pinned
+
+    def test_orchestrator_uses_base_image_override(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CaptureOrchestrator must respect the base_image override."""
+        project = tmp_path / "override_project"
+        project.mkdir()
+        (project / "main.py").write_text("print(1)\n")
+        (project / "requirements.txt").write_text("requests\n")
+
+        # Prevent network calls by monkeypatching digest resolver
+        monkeypatch.setattr(
+            "repropack.core.capture.get_base_image_digest",
+            lambda img: f"{img}@sha256:fakedigest",
+        )
+
+        output = tmp_path / "override.rpk"
+        orch = CaptureOrchestrator(project, output, base_image="python:3.10-slim")
+        result = orch.run()
+
+        with zipfile.ZipFile(result, "r") as zf:
+            manifest_text = zf.read("repropack.yml").decode("utf-8")
+            manifest = ReproPackManifest.from_yaml(manifest_text)
+
+        assert manifest.environment.base_image == "python:3.10-slim@sha256:fakedigest"

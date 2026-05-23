@@ -2,17 +2,106 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 
 from repropack.core.manifest import EnvironmentSpec
 
 # Default base image with digest for strict reproducibility
 DEFAULT_PYTHON_IMAGE = (
-    "python:3.11-slim@sha256:"
-    "fc39e3f1c15fb2fe18205cd4d04718f82baab4f57212a8cb4a04a4a\n"
-    # Note: the hash above is a placeholder; in production it would be resolved
-    # dynamically against the Docker Hub registry.
+    "python:3.11-slim@sha256:" "fc39e3f1c15fb2fe18205cd4d04718f82baab4f57212a8cb4a04a4a"
 )
+
+
+def _command_exists(cmd: str) -> bool:
+    """Check whether a command is available on PATH."""
+    import shutil
+
+    return shutil.which(cmd) is not None
+
+
+def _inspect_with_docker(image: str) -> str | None:
+    """Try to resolve a digest via ``docker inspect``."""
+    try:
+        result = subprocess.run(
+            ["docker", "inspect", "--format={{index .RepoDigests 0}}", image],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        digest = result.stdout.strip()
+        if digest and "@sha256:" in digest:
+            return digest
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+    return None
+
+
+def _inspect_via_registry_api(image: str) -> str | None:
+    """Query Docker Hub API for the digest of a public image.
+
+    Supports ``library/<image>:<tag>`` and ``<user>/<image>:<tag>``.
+    Returns ``None`` for private repos or network errors.
+    """
+    # Parse image string:  name:tag or name@sha256:...
+    if "@sha256:" in image:
+        return image  # Already pinned
+
+    if ":" in image:
+        name, tag = image.rsplit(":", 1)
+    else:
+        name, tag = image, "latest"
+
+    # Normalize namespace
+    repo = f"library/{name}" if "/" not in name else name
+
+    try:
+        import urllib.request
+
+        url = f"https://hub.docker.com/v2/repositories/{repo}/tags/{tag}/"
+        with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310
+            data = json.loads(resp.read().decode("utf-8"))
+
+        images = data.get("images", [])
+        if images:
+            digest = images[0].get("digest", "")
+            if digest.startswith("sha256:"):
+                return f"{name}:{tag}@{digest}"
+    except Exception:  # noqa: BLE001,S110
+        pass
+
+    return None
+
+
+def get_base_image_digest(image: str) -> str:
+    """Resolve the SHA256 digest for a Docker base image.
+
+    Tries, in order:
+    1. ``docker inspect`` if the Docker CLI is available.
+    2. Docker Hub public API for official/community images.
+    3. Return the original string unchanged (may already contain a digest).
+
+    Args:
+        image: Docker image reference, e.g. ``python:3.11-slim``.
+
+    Returns:
+        Image string with digest when available.
+    """
+    if "@sha256:" in image:
+        return image
+
+    # 1. Local docker daemon
+    digest = _inspect_with_docker(image)
+    if digest:
+        return digest
+
+    # 2. Registry API fallback
+    digest = _inspect_via_registry_api(image)
+    if digest:
+        return digest
+
+    return image
 
 
 def resolve_base_image(spec: EnvironmentSpec | None = None) -> str:
