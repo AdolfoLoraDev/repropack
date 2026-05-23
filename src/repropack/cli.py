@@ -9,9 +9,11 @@ from rich.console import Console
 
 from repropack import __version__
 from repropack.core.capture import capture_project
+from repropack.core.inspect import inspect_package
 from repropack.core.manifest import Step, StepType
 from repropack.core.provenance import ProvenanceGraph
 from repropack.core.run import run_package
+from repropack.core.validate import validate_package
 
 app = typer.Typer(
     name="repropack",
@@ -171,6 +173,52 @@ def graph(
         raise typer.Exit(code=1)
 
     console.print(f"[bold green]Graph saved:[/bold green] {output}")
+
+
+@app.command()
+def inspect(
+    rpk: Path = typer.Argument(
+        ...,
+        help="Path to the .rpk package",
+        exists=True,
+        dir_okay=False,
+        resolve_path=True,
+    ),
+) -> None:
+    """Pretty-print the contents of a .rpk package."""
+    try:
+        inspect_package(rpk)
+    except Exception as exc:
+        console.print(f"[bold red]Error:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+
+@app.command()
+def validate(
+    rpk: Path = typer.Argument(
+        ...,
+        help="Path to the .rpk package",
+        exists=True,
+        dir_okay=False,
+        resolve_path=True,
+    ),
+) -> None:
+    """Validate the structure and integrity of a .rpk package."""
+    try:
+        result = validate_package(rpk)
+        if result.valid:
+            console.print("[bold green]✔ Package is valid[/bold green]")
+        else:
+            console.print("[bold red]✘ Package validation failed[/bold red]")
+        for err in result.errors:
+            console.print(f"  [red]ERROR:[/red] {err}")
+        for warn in result.warnings:
+            console.print(f"  [yellow]WARN:[/yellow] {warn}")
+        if not result.valid:
+            raise typer.Exit(code=1)
+    except Exception as exc:
+        console.print(f"[bold red]Error:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
 
 
 @app.command()

@@ -1,0 +1,8 @@
+name: bio-env
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - r-base=4.3
+  - bioconductor-deseq2

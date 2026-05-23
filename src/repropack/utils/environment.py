@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from enum import Enum
 from pathlib import Path
@@ -40,8 +41,15 @@ def detect_env_type(project_path: Path) -> EnvType:
     return EnvType.UNKNOWN
 
 
-def generate_pip_lock(project_path: Path, output_path: Path | None = None) -> Path:
+def generate_pip_lock(
+    project_path: Path,
+    output_path: Path | None = None,
+) -> Path:
     """Generate a requirements.lock with hashes from a pip environment.
+
+    Priority:
+    1. ``pip-compile --generate-hashes`` (if available).
+    2. ``pip freeze --all`` (fallback with warning placeholder).
 
     Args:
         project_path: Project root.
@@ -53,7 +61,7 @@ def generate_pip_lock(project_path: Path, output_path: Path | None = None) -> Pa
     if output_path is None:
         output_path = project_path / "requirements.lock"
 
-    # Prefer pip-compile if available
+    # Prefer pip-compile with hashes
     if _command_exists("pip-compile"):
         req_in = project_path / "requirements.in"
         req_txt = project_path / "requirements.txt"
@@ -70,32 +78,43 @@ def generate_pip_lock(project_path: Path, output_path: Path | None = None) -> Pa
                 check=True,
                 cwd=str(project_path),
             )
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            # If pip-compile fails, fall through to pip freeze fallback
-            pass
-        else:
             return output_path
-    else:
-        # Fallback: pip freeze + pip hash
-        try:
-            result = subprocess.run(
-                ["pip", "freeze", "--all"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            output_path.write_text(result.stdout, encoding="utf-8")
-        except subprocess.CalledProcessError:
-            # If pip freeze fails, create a placeholder lockfile
-            output_path.write_text(
-                "# Lockfile generation failed; install dependencies manually\n",
-                encoding="utf-8",
-            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+
+    # Fallback: pip freeze
+    try:
+        result = subprocess.run(
+            ["pip", "freeze", "--all"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        content = (
+            "# WARNING: This lockfile was generated with 'pip freeze'\n"
+            "#          It does NOT contain cryptographic hashes.\n"
+            "#          Install 'pip-tools' and use 'pip-compile "
+            "--generate-hashes' for strict reproducibility.\n\n"
+            f"{result.stdout}"
+        )
+        output_path.write_text(content, encoding="utf-8")
+    except subprocess.CalledProcessError:
+        output_path.write_text(
+            "# Lockfile generation failed; " "install dependencies manually\n",
+            encoding="utf-8",
+        )
     return output_path
 
 
-def generate_conda_lock(project_path: Path, output_path: Path | None = None) -> Path:
+def generate_conda_lock(
+    project_path: Path,
+    output_path: Path | None = None,
+) -> Path:
     """Generate a frozen Conda environment.
+
+    Priority:
+    1. ``conda-lock lock`` (if available).
+    2. ``conda env export --no-builds`` (fallback).
 
     Args:
         project_path: Project root.
@@ -108,42 +127,70 @@ def generate_conda_lock(project_path: Path, output_path: Path | None = None) -> 
         output_path = project_path / "conda-lock.yml"
 
     if _command_exists("conda-lock"):
-        subprocess.run(
-            ["conda-lock", "lock", "--kind", "lock", "--file", "environment.yml"],
-            check=True,
-            cwd=str(project_path),
-        )
-    else:
-        # Fallback: export active environment
         try:
-            result = subprocess.run(
-                ["conda", "env", "export", "--no-builds"],
-                capture_output=True,
-                text=True,
+            subprocess.run(
+                [
+                    "conda-lock",
+                    "lock",
+                    "--kind",
+                    "lock",
+                    "--file",
+                    "environment.yml",
+                ],
                 check=True,
+                cwd=str(project_path),
             )
-            output_path.write_text(result.stdout, encoding="utf-8")
-        except subprocess.CalledProcessError:
-            # If conda export fails, create a placeholder lockfile
-            output_path.write_text(
-                "# Conda lockfile generation failed; install dependencies manually\n",
-                encoding="utf-8",
-            )
+            return output_path
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+
+    # Fallback: export active environment
+    try:
+        result = subprocess.run(
+            ["conda", "env", "export", "--no-builds"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        output_path.write_text(result.stdout, encoding="utf-8")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        output_path.write_text(
+            "# Conda lockfile generation failed; " "install dependencies manually\n",
+            encoding="utf-8",
+        )
     return output_path
 
 
 def get_python_version() -> str:
     """Get the active Python environment version."""
     result = subprocess.run(
-        ["python", "--version"], capture_output=True, text=True, check=True
+        ["python", "--version"],
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return result.stdout.strip() or result.stderr.strip()
 
 
+def has_editable_installs(lockfile_path: Path) -> bool:
+    """Check whether a lockfile contains editable installs.
+
+    Detects ``-e .`` or ``--editable`` lines.
+
+    Args:
+        lockfile_path: Path to the lockfile.
+
+    Returns:
+        ``True`` if editable installs were found.
+    """
+    if not lockfile_path.exists():
+        return False
+    text = lockfile_path.read_text(encoding="utf-8")
+    return "-e " in text or "--editable" in text
+
+
 def _command_exists(cmd: str) -> bool:
     """Check if a command exists in PATH."""
-    import shutil
-
     return shutil.which(cmd) is not None
 
 
