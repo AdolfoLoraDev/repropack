@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+
 from repropack.core.capture import _build_manifest, _infer_steps, capture_project
 from repropack.core.docker_generator import generate_dockerfile
 from repropack.core.manifest import (
