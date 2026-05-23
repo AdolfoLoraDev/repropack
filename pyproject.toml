@@ -59,6 +59,8 @@ target-version = ["py310", "py311", "py312"]
 [tool.ruff]
 line-length = 88
 target-version = "py310"
+
+[tool.ruff.lint]
 select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
@@ -73,7 +75,7 @@ select = [
 ]
 ignore = ["D100", "D104", "B008"]  # Missing docstrings in __init__ modules; B008 for Typer defaults
 
-[tool.ruff.pydocstyle]
+[tool.ruff.lint.pydocstyle]
 convention = "google"
 
 [tool.pytest.ini_options]

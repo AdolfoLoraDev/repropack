@@ -6,6 +6,10 @@
 
 **ReproPack** is an open-source CLI tool for researchers that turns chaotic project folders into self-contained reproducible packages (`.rpk`).
 
+![Demo GIF](docs/assets/demo.gif)
+
+> **Note:** The GIF above is a placeholder. See [docs/tutorial.md](docs/tutorial.md) for a step-by-step quick-start guide.
+
 ## Key Features
 
 - **Frozen exact environment**: Generates strict Dockerfiles with base image digests and lockfiles.
@@ -31,7 +35,7 @@ pre-commit install
 
 ## Quick Start
 
-### Capture an experiment
+### 1. Capture an experiment
 
 ```bash
 repropack capture --project ./my_experiment --output my_experiment.rpk
@@ -43,7 +47,7 @@ This generates:
 - `provenance.json`: Complete W3C PROV graph.
 - Packaged into a single `.rpk` archive.
 
-### Reproduce an experiment
+### 2. Reproduce an experiment
 
 ```bash
 repropack run my_experiment.rpk
@@ -51,13 +55,17 @@ repropack run my_experiment.rpk
 
 Unpacks, builds the Docker image (or reuses cache), and runs steps in order.
 
-### Visualize the provenance graph
+### 3. Visualize the provenance graph
 
 ```bash
 repropack graph my_experiment.rpk --format mermaid --output graph.html
 ```
 
 Supported formats: `dot`, `mermaid`, `png` (requires Graphviz installed).
+
+## Tutorial
+
+For a hands-on walkthrough from zero to a working `.rpk`, see the **[Quick-Start Tutorial](docs/tutorial.md)**.
 
 ## Example Manifest (repropack.yml)
 
@@ -105,6 +113,20 @@ repropack/
 └── utils/
     └── environment.py  # Environment detection (pip, conda, etc.)
 ```
+
+## Development
+
+Common tasks are automated via the `Makefile`:
+
+| Command | Description |
+|---------|-------------|
+| `make install` | Install package and pre-commit hooks |
+| `make test` | Run pytest with coverage |
+| `make lint` | Run ruff and mypy |
+| `make format` | Run black and ruff --fix |
+| `make clean` | Remove build artifacts |
+| `make build` | Build wheel and sdist |
+| `make publish` | Upload to PyPI |
 
 ## Contributing
 

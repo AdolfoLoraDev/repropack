@@ -71,13 +71,20 @@ def generate_pip_lock(project_path: Path, output_path: Path | None = None) -> Pa
         )
     else:
         # Fallback: pip freeze + pip hash
-        result = subprocess.run(
-            ["pip", "freeze", "--all"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        output_path.write_text(result.stdout, encoding="utf-8")
+        try:
+            result = subprocess.run(
+                ["pip", "freeze", "--all"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            output_path.write_text(result.stdout, encoding="utf-8")
+        except subprocess.CalledProcessError:
+            # If pip freeze fails, create a placeholder lockfile
+            output_path.write_text(
+                "# Lockfile generation failed; install dependencies manually\n",
+                encoding="utf-8",
+            )
     return output_path
 
 
@@ -102,13 +109,20 @@ def generate_conda_lock(project_path: Path, output_path: Path | None = None) -> 
         )
     else:
         # Fallback: export active environment
-        result = subprocess.run(
-            ["conda", "env", "export", "--no-builds"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        output_path.write_text(result.stdout, encoding="utf-8")
+        try:
+            result = subprocess.run(
+                ["conda", "env", "export", "--no-builds"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            output_path.write_text(result.stdout, encoding="utf-8")
+        except subprocess.CalledProcessError:
+            # If conda export fails, create a placeholder lockfile
+            output_path.write_text(
+                "# Conda lockfile generation failed; install dependencies manually\n",
+                encoding="utf-8",
+            )
     return output_path
 
 
