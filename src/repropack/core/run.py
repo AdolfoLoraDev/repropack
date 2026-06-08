@@ -51,6 +51,7 @@ class Reproducer:
         strict: bool = False,
         container: str = "auto",
         profile: bool = False,
+        fetch_data: bool = False,
     ) -> None:
         """Initialize the reproducer.
 
@@ -68,6 +69,8 @@ class Reproducer:
                 Apptainer), ``docker`` or ``apptainer``.
             profile: If ``True``, record per-step duration and write a
                 ``reproduction-profile.json`` next to the package.
+            fetch_data: If ``True``, download external datasets declared in
+                ``data_manifest.json`` before running steps.
         """
         self.rpk_path = rpk_path.resolve()
         self.tag = tag
@@ -77,6 +80,7 @@ class Reproducer:
         self.strict = strict
         self.container = container
         self.profile = profile
+        self.fetch_data = fetch_data
         self._backend = "lite" if lite else container
         self._sif_path: Path | None = None
         self._report_lines: list[str] = []
@@ -97,6 +101,9 @@ class Reproducer:
             manifest = self._validate_package(extract_dir)
             image_tag = self.tag or f"repropack/{manifest.metadata.name}:latest"
             project_dir = extract_dir / "project"
+
+            if self.fetch_data:
+                self._fetch_external_data(extract_dir, project_dir)
 
             if not self.lite:
                 self._backend = self._select_backend(extract_dir)
@@ -172,6 +179,29 @@ class Reproducer:
             )
 
         return manifest
+
+    def _fetch_external_data(self, extract_dir: Path, project_dir: Path) -> None:
+        """Download external datasets declared in ``data_manifest.json``.
+
+        Args:
+            extract_dir: Root of the extracted package.
+            project_dir: ``project/`` directory datasets are downloaded into.
+        """
+        dm_path = extract_dir / "data_manifest.json"
+        if not dm_path.exists():
+            console.print(
+                "[yellow]--fetch-data:[/yellow] no data_manifest.json; "
+                "nothing to fetch."
+            )
+            return
+
+        from repropack.core.data import fetch_datasets
+
+        manifest = json.loads(dm_path.read_text(encoding="utf-8"))
+        console.print("[bold]Fetching external datasets...[/bold]")
+        fetched = fetch_datasets(manifest, project_dir)
+        console.print(f"[green]✔ Fetched {len(fetched)} dataset(s)[/green]")
+        self._report_lines.append(f"Fetched {len(fetched)} external dataset(s)")
 
     def _select_backend(self, extract_dir: Path) -> str:
         """Choose the container backend based on availability and the package.
@@ -699,6 +729,7 @@ def run_package(
     strict: bool = False,
     container: str = "auto",
     profile: bool = False,
+    fetch_data: bool = False,
 ) -> None:
     """Execute a reproducible ``.rpk`` package.
 
@@ -713,6 +744,7 @@ def run_package(
         strict: Verify reproduced outputs against capture-time hashes.
         container: Container backend (``auto``, ``docker`` or ``apptainer``).
         profile: Record per-step timing to ``reproduction-profile.json``.
+        fetch_data: Download external datasets before running.
     """
     reproducer = Reproducer(
         rpk_path=rpk_path,
@@ -723,6 +755,7 @@ def run_package(
         strict=strict,
         container=container,
         profile=profile,
+        fetch_data=fetch_data,
     )
     reproducer.run()
 

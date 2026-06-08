@@ -161,6 +161,11 @@ def run(
         "--profile",
         help="Record per-step timing to reproduction-profile.json.",
     ),
+    fetch_data: bool = typer.Option(
+        False,
+        "--fetch-data",
+        help="Download external datasets from data_manifest.json before running.",
+    ),
 ) -> None:
     """Reproduce a .rpk package."""
     try:
@@ -173,6 +178,7 @@ def run(
             strict=strict,
             container=container,
             profile=profile,
+            fetch_data=fetch_data,
         )
     except Exception as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")
@@ -426,6 +432,93 @@ def export(
         console.print(f"[bold green]Exported:[/bold green] {result}")
     except Exception as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+
+@app.command()
+def sign(
+    rpk: Path = typer.Argument(
+        ...,
+        help="Path to the .rpk package",
+        exists=True,
+        dir_okay=False,
+        resolve_path=True,
+    ),
+    cosign: bool = typer.Option(
+        False,
+        "--cosign",
+        help="Sign with sigstore cosign instead of a SHA256 attestation.",
+    ),
+    key: str | None = typer.Option(
+        None,
+        "--key",
+        help="cosign private key path (keyless/OIDC if omitted).",
+    ),
+) -> None:
+    """Sign a .rpk package (SHA256 attestation, or cosign with --cosign)."""
+    from repropack.core import sign as sign_mod
+
+    try:
+        if cosign:
+            out = sign_mod.sign_with_cosign(rpk, key=key)
+            console.print(f"[bold green]Signature:[/bold green] {out}")
+        else:
+            out = sign_mod.attest_package(rpk)
+            console.print(f"[bold green]Attestation:[/bold green] {out}")
+    except Exception as exc:
+        console.print(f"[bold red]Error:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+
+@app.command()
+def verify(
+    rpk: Path = typer.Argument(
+        ...,
+        help="Path to the .rpk package",
+        exists=True,
+        dir_okay=False,
+        resolve_path=True,
+    ),
+    attestation: Path | None = typer.Option(
+        None,
+        "--attestation",
+        help="Attestation JSON path (defaults to <rpk>.attestation.json).",
+    ),
+    cosign: bool = typer.Option(
+        False,
+        "--cosign",
+        help="Verify a cosign signature instead of a SHA256 attestation.",
+    ),
+    signature: Path | None = typer.Option(
+        None,
+        "--signature",
+        help="cosign signature path (with --cosign).",
+    ),
+    key: str | None = typer.Option(
+        None,
+        "--key",
+        help="cosign public key path (with --cosign).",
+    ),
+) -> None:
+    """Verify a .rpk package's signature or attestation."""
+    from repropack.core import sign as sign_mod
+
+    try:
+        if cosign:
+            if signature is None or key is None:
+                console.print(
+                    "[bold red]Error:[/bold red] --cosign requires "
+                    "--signature and --key"
+                )
+                raise typer.Exit(code=1)
+            sign_mod.verify_with_cosign(rpk, signature, str(key))
+        else:
+            sign_mod.verify_attestation(rpk, attestation)
+        console.print("[bold green]✔ Verification succeeded[/bold green]")
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        console.print(f"[bold red]✘ Verification failed:[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
 
 

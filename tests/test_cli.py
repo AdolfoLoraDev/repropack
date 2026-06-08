@@ -308,3 +308,86 @@ class TestMain:
 
         main()
         assert called["ok"]
+
+
+# =====================================================================
+# sign / verify / run --fetch-data
+# =====================================================================
+
+
+class TestSignVerifyCli:
+    def test_sign_attestation(self, tmp_path: Path) -> None:
+        rpk = _capture(tmp_path)
+        result = runner.invoke(app, ["sign", str(rpk)])
+        assert result.exit_code == 0
+        assert "Attestation" in result.output
+        # verify it
+        result = runner.invoke(app, ["verify", str(rpk)])
+        assert result.exit_code == 0
+        assert "succeeded" in result.output
+
+    def test_verify_failure(self, tmp_path: Path) -> None:
+        rpk = _capture(tmp_path)
+        runner.invoke(app, ["sign", str(rpk)])
+        rpk.write_bytes(b"tampered")
+        result = runner.invoke(app, ["verify", str(rpk)])
+        assert result.exit_code == 1
+        assert "failed" in result.output.lower()
+
+    def test_sign_cosign(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        rpk = _capture(tmp_path)
+        from repropack.core import sign as sign_mod
+
+        monkeypatch.setattr(sign_mod.shutil, "which", lambda x: "/usr/bin/cosign")
+        monkeypatch.setattr(sign_mod.subprocess, "run", lambda cmd, **k: None)
+        result = runner.invoke(app, ["sign", str(rpk), "--cosign"])
+        assert result.exit_code == 0
+        assert "Signature" in result.output
+
+    def test_sign_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        rpk = _capture(tmp_path)
+        from repropack.core import sign as sign_mod
+
+        monkeypatch.setattr(sign_mod.shutil, "which", lambda x: None)
+        result = runner.invoke(app, ["sign", str(rpk), "--cosign"])
+        assert result.exit_code == 1
+
+    def test_verify_cosign_requires_args(self, tmp_path: Path) -> None:
+        rpk = _capture(tmp_path)
+        result = runner.invoke(app, ["verify", str(rpk), "--cosign"])
+        assert result.exit_code == 1
+        assert "requires" in result.output
+
+    def test_verify_cosign_success(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rpk = _capture(tmp_path)
+        sig = tmp_path / "s.sig"
+        sig.write_text("sig")
+        key = tmp_path / "pub.key"
+        key.write_text("key")
+        from repropack.core import sign as sign_mod
+
+        monkeypatch.setattr(sign_mod, "verify_with_cosign", lambda *a, **k: True)
+        result = runner.invoke(
+            app,
+            [
+                "verify",
+                str(rpk),
+                "--cosign",
+                "--signature",
+                str(sig),
+                "--key",
+                str(key),
+            ],
+        )
+        assert result.exit_code == 0
+        assert "succeeded" in result.output
+
+
+class TestRunFetchData:
+    def test_run_fetch_data_no_manifest(self, tmp_path: Path) -> None:
+        rpk = _capture(tmp_path)
+        result = runner.invoke(app, ["run", str(rpk), "--lite", "--fetch-data"])
+        assert result.exit_code == 0
+        assert "nothing to fetch" in result.output

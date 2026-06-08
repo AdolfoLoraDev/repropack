@@ -135,8 +135,14 @@ The foundation is solid, tested, and installable. All items below are complete a
   - [x] Generate `data_manifest.json` with checksums for external datasets
 - [x] **Publish command**
   - [x] `repropack publish --to zenodo` (Zenodo API integration)
-  - [~] `repropack publish --to osf` (scaffolded; OSF upload not yet wired)
+  - [x] `repropack publish --to osf` (OSF API node creation)
   - [x] Generate a citable `CITATION.cff` from manifest metadata
+- [x] **External data fetching**
+  - [x] `repropack run --fetch-data` downloads datasets from `data_manifest.json`
+  - [x] Supports HTTP(S)/DOI/Zenodo and S3 (boto3); verifies SHA256
+- [x] **Package signing / attestation**
+  - [x] `repropack sign` writes a SHA256 attestation (or cosign signature)
+  - [x] `repropack verify` checks the attestation/signature
 - [x] **Provenance graph enhancements**
   - [x] Interactive HTML graph with pan/zoom (Mermaid + svg-pan-zoom)
   - [x] Export provenance as W3C PROV-XML
@@ -187,8 +193,8 @@ The foundation is solid, tested, and installable. All items below are complete a
   - [ ] Quarterly public maintenance reports (issues closed, releases, roadmap updates)
 - [x] **Ecosystem integrations**
   - [x] Plugin API so third parties can add custom exporters (entry points + built-ins)
-  - [ ] Integration with `reprozip` for legacy compatibility *(future)*
-  - [ ] Integration with `repo2docker` for Binder compatibility *(future)*
+  - [x] `reprozip` exporter (reprounzip-style config descriptor)
+  - [x] `repo2docker` exporter (Binder-buildable context directory)
 
 ---
 

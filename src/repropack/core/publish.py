@@ -143,6 +143,57 @@ def _zenodo_deposit(rpk_path: Path, token: str, sandbox: bool = False) -> str:
     return str(deposition.get("links", {}).get("html", f"https://{host}"))
 
 
+def _osf_create_node(rpk_path: Path, token: str, sandbox: bool = False) -> str:
+    """Create an OSF project node for the package via the OSF API.
+
+    Creates the node (project) and returns its URL. Uploading the ``.rpk`` as
+    a file to the node's storage is left as a follow-up (it requires a second,
+    Waterbutler-hosted request).
+
+    Args:
+        rpk_path: Path to the ``.rpk`` file.
+        token: OSF personal access token.
+        sandbox: Use the OSF test instance when ``True``.
+
+    Returns:
+        URL of the created OSF node.
+
+    Raises:
+        RuntimeError: On any API error.
+    """
+    import urllib.request
+
+    host = "api.test.osf.io" if sandbox else "api.osf.io"
+    manifest = _load_manifest_from_rpk(rpk_path)
+    payload = {
+        "data": {
+            "type": "nodes",
+            "attributes": {
+                "title": manifest.metadata.name,
+                "category": "software",
+                "description": manifest.metadata.description or manifest.metadata.name,
+            },
+        }
+    }
+    try:
+        req = urllib.request.Request(
+            f"https://{host}/v2/nodes/",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+            node = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"OSF deposition failed: {exc}") from exc
+
+    links = node.get("data", {}).get("links", {})
+    return str(links.get("html", f"https://{host}"))
+
+
 def publish_package(
     rpk_path: Path,
     to: str = "citation",
@@ -182,8 +233,6 @@ def publish_package(
     if to == "zenodo":
         result["url"] = _zenodo_deposit(rpk_path, resolved_token, sandbox=sandbox)
     else:  # osf
-        raise RuntimeError(
-            "OSF publishing is not yet implemented; CITATION.cff was generated."
-        )
+        result["url"] = _osf_create_node(rpk_path, resolved_token, sandbox=sandbox)
 
     return result

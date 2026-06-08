@@ -299,14 +299,15 @@ class TestPublishZenodoOsf:
         result = pub.publish_package(self._rpk(tmp_path), to="zenodo", token="tok")
         assert result["url"] == "https://z/1"
 
-    def test_publish_osf_not_implemented(
+    def test_publish_osf_via_env_token(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from repropack.core import publish as pub
 
         monkeypatch.setenv("REPROPACK_OSF_TOKEN", "tok")
-        with pytest.raises(RuntimeError, match="OSF publishing is not yet"):
-            pub.publish_package(self._rpk(tmp_path), to="osf")
+        monkeypatch.setattr(pub, "_osf_create_node", lambda *a, **k: "https://osf/y")
+        result = pub.publish_package(self._rpk(tmp_path), to="osf")
+        assert result["url"] == "https://osf/y"
 
     def test_zenodo_deposit_network_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

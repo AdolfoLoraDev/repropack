@@ -11,6 +11,8 @@ alternative provenance serialisation, a Nextflow/Galaxy descriptor, ...).
 | `citation` | `CITATION.cff` (Citation File Format 1.2.0) |
 | `provxml` | W3C PROV-XML of the provenance graph |
 | `mermaid` | Mermaid diagram of the provenance graph |
+| `repo2docker` | A jupyter-repo2docker / Binder-buildable context directory |
+| `reprozip` | A reprozip/reprounzip-style config descriptor (YAML) |
 
 ```bash
 repropack export exp.rpk                       # list available exporters

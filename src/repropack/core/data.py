@@ -125,3 +125,115 @@ def parse_data_refs(raw: list[str] | None) -> dict[str, str]:
 def save_data_manifest(manifest: dict[str, Any], path: Path) -> None:
     """Write the data manifest to disk as JSON."""
     path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Fetching external datasets
+# ---------------------------------------------------------------------------
+
+
+class DataFetchError(RuntimeError):
+    """Raised when an external dataset cannot be fetched or verified."""
+
+
+def _resolve_url(source: str) -> str:
+    """Resolve an HTTP(S)-downloadable URL from a source reference.
+
+    Args:
+        source: Source reference (URL, DOI, ...).
+
+    Returns:
+        An HTTP(S) URL.
+
+    Raises:
+        DataFetchError: If no HTTP URL can be derived.
+    """
+    low = source.lower()
+    if low.startswith(("http://", "https://")):
+        return source
+    if low.startswith("doi:"):
+        return "https://doi.org/" + source[4:]
+    if "doi.org" in low:
+        return source
+    raise DataFetchError(f"Cannot resolve a download URL from source: {source}")
+
+
+def _download_http(url: str, target: Path, timeout: int = 60) -> None:
+    """Download ``url`` to ``target`` over HTTP(S)."""
+    import urllib.request
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
+        target.write_bytes(resp.read())
+
+
+def _download_s3(source: str, target: Path) -> None:
+    """Download an ``s3://bucket/key`` object to ``target`` (needs boto3)."""
+    try:
+        import boto3
+    except ImportError as exc:
+        raise DataFetchError(
+            "S3 fetching requires 'boto3' (pip install boto3)."
+        ) from exc
+
+    rest = source[len("s3://") :]
+    bucket, _, key = rest.partition("/")
+    if not bucket or not key:
+        raise DataFetchError(f"Malformed S3 URI: {source}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    boto3.client("s3").download_file(bucket, key, str(target))
+
+
+def fetch_datasets(
+    manifest: dict[str, Any],
+    dest_dir: Path,
+    *,
+    verify: bool = True,
+) -> list[str]:
+    """Fetch external datasets declared in a data manifest into ``dest_dir``.
+
+    Entries without a ``source`` (locally excluded files with no external
+    reference) are skipped. After download, each file's SHA256 is checked
+    against the manifest when ``verify`` is ``True``.
+
+    Args:
+        manifest: Parsed ``data_manifest.json``.
+        dest_dir: Directory to download datasets into (relative paths kept).
+        verify: Whether to verify checksums after download.
+
+    Returns:
+        Relative paths of the datasets actually fetched.
+
+    Raises:
+        DataFetchError: On an unsupported source, download failure or
+            checksum mismatch.
+    """
+    fetched: list[str] = []
+    for entry in manifest.get("datasets", []):
+        source = entry.get("source")
+        if not source:
+            continue
+        rel = entry["path"]
+        target = dest_dir / rel
+        source_type = entry.get("source_type", "unknown")
+
+        if source_type in ("url", "zenodo", "doi"):
+            _download_http(_resolve_url(source), target)
+        elif source_type == "s3":
+            _download_s3(source, target)
+        elif source_type == "dvc":
+            raise DataFetchError(
+                "DVC datasets require the 'dvc' CLI; run 'dvc pull' manually."
+            )
+        else:
+            raise DataFetchError(f"Unsupported data source: {source}")
+
+        expected = entry.get("sha256")
+        if verify and expected:
+            actual = _sha256(target)
+            if actual != expected:
+                raise DataFetchError(
+                    f"Checksum mismatch for {rel}: expected {expected}, got {actual}"
+                )
+        fetched.append(rel)
+    return fetched

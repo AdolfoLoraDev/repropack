@@ -32,6 +32,7 @@ Reproduce a `.rpk` package.
 | `--strict` | Re-hash declared outputs and fail on drift. |
 | `--container, -c` | `auto` (Docker, fallback Apptainer), `docker`, `apptainer`. |
 | `--profile` | Record per-step timing to `reproduction-profile.json`. |
+| `--fetch-data` | Download external datasets from `data_manifest.json` first. |
 
 ## `repropack inspect`
 
@@ -72,9 +73,22 @@ repropack export exp.rpk -e citation -o CITATION.cff
 
 ## `repropack publish`
 
-Generate `CITATION.cff` and optionally deposit to Zenodo.
+Generate `CITATION.cff` and optionally deposit to Zenodo or the OSF.
 
 ```bash
 repropack publish exp.rpk --to citation
 repropack publish exp.rpk --to zenodo --token "$ZENODO_TOKEN"
+repropack publish exp.rpk --to osf --token "$OSF_TOKEN"
+```
+
+## `repropack sign` / `repropack verify`
+
+Attest and verify package integrity. By default a SHA256 attestation is
+written next to the package; with `--cosign` a sigstore signature is used.
+
+```bash
+repropack sign exp.rpk                 # writes exp.rpk.attestation.json
+repropack verify exp.rpk               # checks the attestation
+repropack sign exp.rpk --cosign --key cosign.key
+repropack verify exp.rpk --cosign --signature exp.rpk.sig --key cosign.pub
 ```

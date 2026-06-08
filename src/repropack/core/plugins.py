@@ -121,3 +121,75 @@ def _export_mermaid(rpk_path: Path, output: Path) -> Path:
     graph = ProvenanceGraph.from_prov_json(prov_data)
     output.write_text(graph.to_mermaid(), encoding="utf-8")
     return output
+
+
+@register_exporter("repo2docker")
+def _export_repo2docker(rpk_path: Path, output: Path) -> Path:
+    """Export a jupyter-repo2docker / Binder-buildable context directory.
+
+    Writes the package's ``project/`` files plus the frozen ``Dockerfile`` into
+    ``output`` so it can be built with ``jupyter-repo2docker <output>``.
+
+    Args:
+        rpk_path: Path to the ``.rpk`` package.
+        output: Target directory (created if missing).
+
+    Returns:
+        The populated context directory.
+    """
+    output.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(rpk_path, "r") as zf:
+        names = zf.namelist()
+        for name in names:
+            if name.startswith("project/") and not name.endswith("/"):
+                rel = name[len("project/") :]
+                dest = output / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(zf.read(name))
+        if "Dockerfile" in names:
+            (output / "Dockerfile").write_bytes(zf.read("Dockerfile"))
+    return output
+
+
+@register_exporter("reprozip")
+def _export_reprozip(rpk_path: Path, output: Path) -> Path:
+    """Export a reprozip/reprounzip-style configuration descriptor (YAML).
+
+    Captures the manifest's automatic steps as ``runs`` with their commands,
+    inputs and outputs so the experiment can be reconstructed by reprounzip
+    tooling.
+
+    Args:
+        rpk_path: Path to the ``.rpk`` package.
+        output: Target YAML file.
+
+    Returns:
+        The written YAML file.
+    """
+    import yaml
+
+    from repropack.core.manifest import ReproPackManifest
+
+    with zipfile.ZipFile(rpk_path, "r") as zf:
+        manifest = ReproPackManifest.from_yaml(zf.read("repropack.yml").decode("utf-8"))
+    runs = [
+        {
+            "id": step.id,
+            "command": step.command,
+            "inputs": step.inputs,
+            "outputs": step.outputs,
+        }
+        for step in manifest.steps
+        if step.command
+    ]
+    config = {
+        "version": "reprozip-repropack-1",
+        "experiment": manifest.metadata.name,
+        "base_image": manifest.environment.base_image,
+        "runs": runs,
+    }
+    output.write_text(
+        yaml.safe_dump(config, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    return output
