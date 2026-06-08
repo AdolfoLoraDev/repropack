@@ -92,7 +92,12 @@ def validate_package(rpk_path: Path) -> ValidationResult:
                     "No file_hashes in manifest; integrity check skipped"
                 )
 
-            # 4. Detect editable installs in requirements
+            # 4. Verify the Dockerfile provides every required runtime
+            if manifest and "Dockerfile" in namelist:
+                dockerfile = zf.read("Dockerfile").decode("utf-8")
+                _check_runtimes(manifest, dockerfile, result)
+
+            # 5. Detect editable installs in requirements
             if manifest and manifest.environment.python_requirements:
                 req_arc = manifest.environment.python_requirements
                 if req_arc in namelist:
@@ -110,3 +115,38 @@ def validate_package(rpk_path: Path) -> ValidationResult:
 
     result.valid = len(result.errors) == 0
     return result
+
+
+# Map a step language to a token expected in the Dockerfile and the
+# human-readable runtime name used in the warning message.
+_RUNTIME_TOKENS: dict[str, tuple[str, str]] = {
+    "r": ("r-base", "R"),
+    "julia": ("julia", "Julia"),
+    "octave": ("octave", "Octave"),
+    "cmake": ("cmake", "CMake"),
+}
+
+
+def _check_runtimes(
+    manifest: ReproPackManifest,
+    dockerfile: str,
+    result: ValidationResult,
+) -> None:
+    """Warn when a step's language has no matching runtime in the Dockerfile.
+
+    Args:
+        manifest: Parsed manifest with language-tagged steps.
+        dockerfile: Dockerfile contents.
+        result: Validation result to append warnings to.
+    """
+    languages = {step.language for step in manifest.steps if step.language is not None}
+    for lang in sorted(languages):
+        token = _RUNTIME_TOKENS.get(lang)
+        if token is None:
+            continue
+        needle, runtime_name = token
+        if needle not in dockerfile:
+            result.add_warning(
+                f"Steps require {runtime_name} but the Dockerfile does not "
+                f"install it (missing '{needle}'); reproduction may fail"
+            )

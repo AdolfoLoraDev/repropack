@@ -19,6 +19,8 @@ from pathlib import Path
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
+from repropack.core.apptainer_generator import generate_apptainer_def
+from repropack.core.data import build_data_manifest, save_data_manifest
 from repropack.core.docker_generator import generate_dockerfile, get_base_image_digest
 from repropack.core.manifest import (
     EnvironmentSpec,
@@ -31,6 +33,8 @@ from repropack.core.provenance import ProvenanceGraph
 from repropack.utils.environment import (
     EnvType,
     detect_env_type,
+    detect_julia_project,
+    detect_r_renv,
     generate_conda_lock,
     generate_pip_lock,
     list_project_files,
@@ -62,6 +66,10 @@ class CaptureOrchestrator:
         output_path: Path,
         extra_steps: list[Step] | None = None,
         base_image: str | None = None,
+        container: str = "docker",
+        exclude_data: bool = False,
+        data_threshold_mb: float = 50.0,
+        data_refs: dict[str, str] | None = None,
     ) -> None:
         """Initialize the orchestrator.
 
@@ -70,13 +78,30 @@ class CaptureOrchestrator:
             output_path: Desired output path for the ``.rpk`` file.
             extra_steps: Optional additional manual/automatic steps to append.
             base_image: Optional Docker base image override (e.g. ``python:3.11-slim``).
+            container: Container backend to target: ``docker`` (default),
+                ``apptainer`` (also emit ``apptainer.def``), or ``both``.
+            exclude_data: If ``True``, files larger than ``data_threshold_mb``
+                are excluded from the archive and recorded in
+                ``data_manifest.json`` instead.
+            data_threshold_mb: Size threshold (in MB) for ``exclude_data``.
+            data_refs: Mapping of relative path to an external data source
+                (DOI/Zenodo/S3/DVC/URL) recorded in ``data_manifest.json``.
         """
         self.project_path = project_path.resolve()
         self.output_path = output_path.resolve()
         self.extra_steps = extra_steps or []
         self.base_image_override = base_image
+        self.container = container
+        self.exclude_data = exclude_data
+        self.data_threshold_bytes = int(data_threshold_mb * 1024 * 1024)
+        self.data_refs = data_refs or {}
         self._env_type: EnvType | None = None
         self._lockfile_path: Path | None = None
+        self._r_renv_path: Path | None = None
+        self._julia_project_path: Path | None = None
+        self._workdir: Path | None = None
+        self._included_files: list[str] = []
+        self._excluded_files: list[str] = []
 
     # ------------------------------------------------------------------
     # Public API
@@ -90,27 +115,31 @@ class CaptureOrchestrator:
         """
         self._validate_project()
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            self._env_type = self._detect_environment(progress)
-            self._lockfile_path = self._generate_lockfile(progress)
-            manifest = self._build_manifest()
-            dockerfile_content = self._generate_dockerfile(progress, manifest)
-            file_hashes = self._compute_hashes(progress)
-            provenance = self._build_provenance(
-                progress, manifest, file_hashes=file_hashes
-            )
-            # Inject hashes into the manifest before packaging
-            manifest.file_hashes = file_hashes
-            self._package(
-                progress,
-                manifest=manifest,
-                dockerfile_content=dockerfile_content,
-                provenance=provenance,
-            )
+        with tempfile.TemporaryDirectory() as workdir:
+            self._workdir = Path(workdir)
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console,
+            ) as progress:
+                self._env_type = self._detect_environment(progress)
+                self._lockfile_path = self._generate_lockfile(progress)
+                self._detect_extra_languages()
+                self._select_files()
+                manifest = self._build_manifest()
+                dockerfile_content = self._generate_dockerfile(progress, manifest)
+                file_hashes = self._compute_hashes(progress)
+                provenance = self._build_provenance(
+                    progress, manifest, file_hashes=file_hashes
+                )
+                # Inject hashes into the manifest before packaging
+                manifest.file_hashes = file_hashes
+                self._package(
+                    progress,
+                    manifest=manifest,
+                    dockerfile_content=dockerfile_content,
+                    provenance=provenance,
+                )
 
         console.print(f"[bold green]Package generated:[/bold green] {self.output_path}")
         return self.output_path
@@ -147,15 +176,65 @@ class CaptureOrchestrator:
         """Generate a lockfile based on the detected environment."""
         task = progress.add_task("Generating lockfile...", total=None)
         lockfile_path: Path | None = None
+        # Generate lockfiles into the orchestrator's temp dir so we never
+        # write artifacts back into the user's project directory.
+        assert self._workdir is not None
         if self._env_type is not None:
-            if self._env_type.value == "pip":
-                lockfile_path = generate_pip_lock(self.project_path)
+            if self._env_type.value in ("pip", "poetry"):
+                # Poetry resolves into a pip-compatible environment, so a
+                # pip lockfile captures the installed packages either way.
+                lockfile_path = generate_pip_lock(
+                    self.project_path, self._workdir / "requirements.lock"
+                )
             elif self._env_type.value == "conda":
-                lockfile_path = generate_conda_lock(self.project_path)
+                lockfile_path = generate_conda_lock(
+                    self.project_path, self._workdir / "conda-lock.yml"
+                )
         progress.update(task, completed=True)
         if lockfile_path:
             console.print(f"[green]Lockfile:[/green] {lockfile_path.name}")
         return lockfile_path
+
+    def _detect_extra_languages(self) -> None:
+        """Detect non-Python language ecosystems (R, Julia) in the project."""
+        self._r_renv_path = detect_r_renv(self.project_path)
+        self._julia_project_path = detect_julia_project(self.project_path)
+        if self._r_renv_path:
+            console.print(f"[green]R renv detected:[/green] {self._r_renv_path.name}")
+        if self._julia_project_path:
+            console.print(
+                "[green]Julia project detected:[/green] "
+                f"{self._julia_project_path.name}"
+            )
+
+    def _select_files(self) -> None:
+        """Partition project files into included and excluded (large data).
+
+        When ``exclude_data`` is enabled, files larger than the configured
+        threshold are excluded from the package and recorded in
+        ``data_manifest.json``. Files declared as external ``data_refs`` are
+        always excluded regardless of size.
+        """
+        all_files = list_project_files(self.project_path)
+        included: list[str] = []
+        excluded: list[str] = []
+        for rel in all_files:
+            src = self.project_path / rel
+            too_big = (
+                self.exclude_data and src.stat().st_size > self.data_threshold_bytes
+            )
+            is_ref = rel in self.data_refs
+            if too_big or is_ref:
+                excluded.append(rel)
+            else:
+                included.append(rel)
+        self._included_files = included
+        self._excluded_files = excluded
+        if excluded:
+            console.print(
+                f"[yellow]Excluding {len(excluded)} data file(s) "
+                "→ data_manifest.json[/yellow]"
+            )
 
     def _build_manifest(self) -> ReproPackManifest:
         """Build the Pydantic-validated manifest."""
@@ -172,7 +251,7 @@ class CaptureOrchestrator:
         conda_env: str | None = None
 
         if self._lockfile_path:
-            if env_type_value == "pip":
+            if env_type_value in ("pip", "poetry"):
                 python_req = self._lockfile_path.name
             elif env_type_value == "conda":
                 conda_env = self._lockfile_path.name
@@ -191,7 +270,9 @@ class CaptureOrchestrator:
             base_image=resolved_image,
             python_requirements=python_req,
             conda_environment=conda_env,
-            system_packages=[],
+            r_renv="renv.lock" if self._r_renv_path else None,
+            julia_project="Project.toml" if self._julia_project_path else None,
+            system_packages=self._infer_system_packages(),
         )
 
         steps = self._infer_steps()
@@ -211,7 +292,7 @@ class CaptureOrchestrator:
         task = progress.add_task("Generating Dockerfile...", total=None)
         content = generate_dockerfile(
             env=manifest.environment,
-            project_files=list_project_files(self.project_path),
+            project_files=self._included_files,
         )
         progress.update(task, completed=True)
         return content
@@ -233,7 +314,7 @@ class CaptureOrchestrator:
         """Calculate SHA256 for every project file."""
         task = progress.add_task("Computing file hashes...", total=None)
         hashes: dict[str, str] = {}
-        for rel_path in list_project_files(self.project_path):
+        for rel_path in self._included_files:
             src = self.project_path / rel_path
             hashes[rel_path] = _file_hash(src)
         progress.update(task, completed=True)
@@ -254,7 +335,7 @@ class CaptureOrchestrator:
             staging.mkdir()
 
             # 1. Copy project files
-            project_files = list_project_files(self.project_path)
+            project_files = self._included_files
             for rel in project_files:
                 src = self.project_path / rel
                 dst = staging / "project" / rel
@@ -267,12 +348,28 @@ class CaptureOrchestrator:
             # 3. Save Dockerfile
             (staging / "Dockerfile").write_text(dockerfile_content, encoding="utf-8")
 
+            # 3b. Optionally emit an Apptainer/Singularity definition file
+            if self.container in ("apptainer", "both"):
+                def_content = generate_apptainer_def(
+                    env=manifest.environment,
+                    project_files=self._included_files,
+                )
+                (staging / "apptainer.def").write_text(def_content, encoding="utf-8")
+
+            # 4c. Emit data_manifest.json for excluded/external datasets
+            if self._excluded_files or self.data_refs:
+                data_manifest = build_data_manifest(
+                    self.project_path,
+                    self._excluded_files,
+                    self.data_refs,
+                )
+                save_data_manifest(data_manifest, staging / "data_manifest.json")
+
             # 4. Save provenance
             provenance.save(staging / "provenance.json")
 
-            # 5. Copy lockfile if present
-            if self._lockfile_path and self._lockfile_path.exists():
-                shutil.copy2(self._lockfile_path, staging / self._lockfile_path.name)
+            # 5. Stage dependency artifacts (lockfiles, renv.lock, Julia files)
+            self._stage_dependency_files(staging)
 
             # 6. Create .rpk (zip)
             with zipfile.ZipFile(self.output_path, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -283,6 +380,35 @@ class CaptureOrchestrator:
 
         progress.update(task, completed=True)
 
+    def _stage_dependency_files(self, staging: Path) -> None:
+        """Copy dependency artifacts into the package.
+
+        Lockfiles and language manifests are placed inside ``project/`` so the
+        Dockerfile ``COPY`` instructions resolve against the build context. The
+        Python/Conda lockfile is additionally copied to the archive root for
+        quick inspection without unpacking ``project/``.
+
+        Args:
+            staging: Root of the staging directory.
+        """
+        project_root = staging / "project"
+
+        # Python / Conda lockfile
+        if self._lockfile_path and self._lockfile_path.exists():
+            shutil.copy2(self._lockfile_path, staging / self._lockfile_path.name)
+            shutil.copy2(self._lockfile_path, project_root / self._lockfile_path.name)
+
+        # R renv.lock (flattened to project/renv.lock)
+        if self._r_renv_path and self._r_renv_path.exists():
+            shutil.copy2(self._r_renv_path, project_root / "renv.lock")
+
+        # Julia Project.toml (+ Manifest.toml when present)
+        if self._julia_project_path and self._julia_project_path.exists():
+            shutil.copy2(self._julia_project_path, project_root / "Project.toml")
+            manifest_toml = self.project_path / "Manifest.toml"
+            if manifest_toml.exists():
+                shutil.copy2(manifest_toml, project_root / "Manifest.toml")
+
     def _infer_steps(self) -> list[Step]:
         """Infer automatic steps from common script names.
 
@@ -290,8 +416,13 @@ class CaptureOrchestrator:
         - Python scripts: ``prepare.py``, ``train.py``, ``evaluate.py``, etc.
         - Jupyter notebooks: ``*.ipynb``
         - R scripts: ``*.R``
+        - Julia scripts: ``*.jl``
+        - MATLAB/Octave scripts: ``*.m``
         - Shell scripts: ``*.sh``
+        - CMake projects: ``CMakeLists.txt``
         - Makefile targets
+
+        Every inferred step is tagged with its :attr:`Step.language`.
         """
         steps: list[Step] = []
         candidates: list[tuple[str, list[str]]] = [
@@ -309,6 +440,7 @@ class CaptureOrchestrator:
                             type=StepType.AUTOMATIC,
                             command=f"python {fname}",
                             description=f"Detected step: {step_id}",
+                            language="python",
                         )
                     )
                     break
@@ -321,6 +453,7 @@ class CaptureOrchestrator:
                     type=StepType.AUTOMATIC,
                     command=f"jupyter execute {notebook.name}",
                     description=f"Detected Jupyter notebook: {notebook.name}",
+                    language="python",
                 )
             )
 
@@ -332,6 +465,31 @@ class CaptureOrchestrator:
                     type=StepType.AUTOMATIC,
                     command=f"Rscript {r_script.name}",
                     description=f"Detected R script: {r_script.name}",
+                    language="r",
+                )
+            )
+
+        # Julia scripts
+        for jl_script in sorted(self.project_path.glob("*.jl")):
+            steps.append(
+                Step(
+                    id=f"julia_{jl_script.stem}",
+                    type=StepType.AUTOMATIC,
+                    command=f"julia --project=. {jl_script.name}",
+                    description=f"Detected Julia script: {jl_script.name}",
+                    language="julia",
+                )
+            )
+
+        # MATLAB / Octave scripts (executed with Octave for an open runtime)
+        for m_script in sorted(self.project_path.glob("*.m")):
+            steps.append(
+                Step(
+                    id=f"octave_{m_script.stem}",
+                    type=StepType.AUTOMATIC,
+                    command=f"octave --no-gui {m_script.name}",
+                    description=f"Detected MATLAB/Octave script: {m_script.name}",
+                    language="octave",
                 )
             )
 
@@ -343,6 +501,29 @@ class CaptureOrchestrator:
                     type=StepType.AUTOMATIC,
                     command=f"bash {sh_script.name}",
                     description=f"Detected shell script: {sh_script.name}",
+                    language="shell",
+                )
+            )
+
+        # CMake projects: configure + build
+        if (self.project_path / "CMakeLists.txt").exists():
+            steps.append(
+                Step(
+                    id="cmake_configure",
+                    type=StepType.AUTOMATIC,
+                    command="cmake -S . -B build",
+                    description="Detected CMake project: configure",
+                    language="cmake",
+                )
+            )
+            steps.append(
+                Step(
+                    id="cmake_build",
+                    type=StepType.AUTOMATIC,
+                    command="cmake --build build",
+                    description="Detected CMake project: build",
+                    language="cmake",
+                    depends_on=["cmake_configure"],
                 )
             )
 
@@ -357,10 +538,46 @@ class CaptureOrchestrator:
                         type=StepType.AUTOMATIC,
                         command=f"make {target}",
                         description=f"Detected Makefile target: {target}",
+                        language="make",
                     )
                 )
 
         return steps
+
+    def _infer_system_packages(self) -> list[str]:
+        """Infer apt system packages required by the detected languages.
+
+        Scans the project for source files that need a compiler toolchain or
+        a non-Python runtime and returns the matching Debian package names.
+
+        Returns:
+            Sorted list of system package names (possibly empty).
+        """
+        packages: set[str] = set()
+
+        def _has(*patterns: str) -> bool:
+            return any(next(self.project_path.rglob(pat), None) for pat in patterns)
+
+        # C / C++ sources or a build system that drives a compiler
+        if (
+            _has("*.c", "*.cpp", "*.cc", "*.cxx", "*.h", "*.hpp")
+            or (self.project_path / "Makefile").exists()
+        ):
+            packages.add("build-essential")
+
+        # Fortran sources
+        if _has("*.f", "*.f90", "*.f95", "*.for"):
+            packages.add("gfortran")
+
+        # CMake build system
+        if (self.project_path / "CMakeLists.txt").exists():
+            packages.update({"build-essential", "cmake"})
+
+        # MATLAB/Octave scripts
+        if _has("*.m"):
+            packages.add("octave")
+
+        return sorted(packages)
 
 
 # ------------------------------------------------------------------
@@ -373,6 +590,10 @@ def capture_project(
     output_path: Path,
     extra_steps: list[Step] | None = None,
     base_image: str | None = None,
+    container: str = "docker",
+    exclude_data: bool = False,
+    data_threshold_mb: float = 50.0,
+    data_refs: dict[str, str] | None = None,
 ) -> Path:
     """Capture a complete project into a ``.rpk`` package.
 
@@ -383,6 +604,10 @@ def capture_project(
         output_path: Output path for the ``.rpk`` file.
         extra_steps: Additional steps to include in the manifest.
         base_image: Optional Docker base image override.
+        container: Container backend (``docker``, ``apptainer`` or ``both``).
+        exclude_data: Exclude large files into ``data_manifest.json``.
+        data_threshold_mb: Size threshold (MB) for ``exclude_data``.
+        data_refs: Mapping of path to external data source.
 
     Returns:
         Path to the generated ``.rpk`` file.
@@ -392,6 +617,10 @@ def capture_project(
         output_path=output_path,
         extra_steps=extra_steps,
         base_image=base_image,
+        container=container,
+        exclude_data=exclude_data,
+        data_threshold_mb=data_threshold_mb,
+        data_refs=data_refs,
     )
     return orchestrator.run()
 

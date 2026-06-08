@@ -8,10 +8,10 @@ from pathlib import Path
 
 from repropack.core.manifest import EnvironmentSpec
 
-# Default base image with digest for strict reproducibility
-DEFAULT_PYTHON_IMAGE = (
-    "python:3.11-slim@sha256:" "fc39e3f1c15fb2fe18205cd4d04718f82baab4f57212a8cb4a04a4a"
-)
+# Default base image. The digest is resolved at capture time via
+# ``get_base_image_digest`` (docker inspect or registry API); we avoid
+# hard-coding a fake/stale digest here.
+DEFAULT_PYTHON_IMAGE = "python:3.11-slim"
 
 
 def _command_exists(cmd: str) -> bool:
@@ -193,12 +193,65 @@ def generate_dockerfile(
             ]
         )
 
-    # Copy project files
+    # R ecosystem: install R + renv and restore the locked library
+    if env.r_renv:
+        renv_path = Path(env.r_renv).name
+        lines.extend(
+            [
+                "# Install R and restore the renv library",
+                "RUN apt-get update && apt-get install -y --no-install-recommends \\",
+                "    r-base && \\",
+                "    rm -rf /var/lib/apt/lists/*",
+                "RUN R -e \"install.packages('renv', repos='https://cloud.r-project.org')\"",  # noqa: E501
+                f"COPY {env.r_renv} {workdir}/{renv_path}",
+                f"RUN R -e \"renv::restore(lockfile='{workdir}/{renv_path}')\"",
+                "",
+            ]
+        )
+
+    # Julia ecosystem: install Julia and instantiate the project
+    if env.julia_project:
+        proj_path = Path(env.julia_project).name
+        manifest_name = "Manifest.toml"
+        lines.extend(
+            [
+                "# Install Julia and instantiate the project",
+                "ENV JULIA_VERSION=1.10.4",
+                "RUN apt-get update && apt-get install -y --no-install-recommends \\",
+                "    curl ca-certificates && \\",
+                "    rm -rf /var/lib/apt/lists/* && \\",
+                "    curl -fsSL "
+                '"https://julialang-s3.julialang.org/bin/linux/x64/'
+                '${JULIA_VERSION%.*}/julia-${JULIA_VERSION}-linux-x86_64.tar.gz"'
+                " | tar -xz -C /opt && \\",
+                "    ln -s /opt/julia-${JULIA_VERSION}/bin/julia /usr/local/bin/julia",
+                f"COPY {env.julia_project} {workdir}/{proj_path}",
+                f"COPY {manifest_name} {workdir}/{manifest_name}",
+                f"RUN julia --project={workdir} -e " '"using Pkg; Pkg.instantiate()"',
+                "",
+            ]
+        )
+
+    # Copy project files (skip dependency artifacts already COPYed above to
+    # avoid duplicate COPY instructions).
     if project_files:
+        already_copied = {
+            Path(p).name
+            for p in (
+                env.python_requirements,
+                env.conda_environment,
+                env.r_renv,
+                env.julia_project,
+                "Manifest.toml" if env.julia_project else None,
+            )
+            if p
+        }
         lines.append("# Copy project files")
         for f in project_files:
             # Use normpath to avoid path issues
             safe = Path(f).as_posix()
+            if Path(safe).name in already_copied:
+                continue
             lines.append(f"COPY {safe} {workdir}/{safe}")
         lines.append("")
 
@@ -211,7 +264,7 @@ def generate_dockerfile(
             f'ENV PYTHONPATH="{workdir}"',
             "",
             "# Entrypoint: manifest should define the CMD",
-            '["echo", "Use repropack run to execute the defined steps"]',
+            'CMD ["echo", "Use repropack run to execute the defined steps"]',
         ]
     )
 

@@ -45,6 +45,13 @@ class EnvironmentSpec(BaseModel):
     conda_environment: str | None = Field(
         default=None, description="Path to frozen environment.yml"
     )
+    r_renv: str | None = Field(
+        default=None, description="Path to renv.lock for the R ecosystem"
+    )
+    julia_project: str | None = Field(
+        default=None,
+        description="Path to Julia Project.toml (Manifest.toml staged alongside)",
+    )
     system_packages: list[str] = Field(
         default_factory=list, description="System packages to install"
     )
@@ -64,6 +71,10 @@ class Step(BaseModel):
     description: str | None = Field(default=None, description="Step description")
     instructions: str | None = Field(
         default=None, description="Detailed instructions (manual only)"
+    )
+    language: str | None = Field(
+        default=None,
+        description="Inferred language/runtime (python, r, julia, octave, etc.)",
     )
     inputs: list[str] = Field(
         default_factory=list, description="Input files or directories"

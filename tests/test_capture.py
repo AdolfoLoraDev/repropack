@@ -317,6 +317,9 @@ class TestSnapshotManifest:
         )
         assert "--require-hashes" in dockerfile
         assert "USER repro" in dockerfile
+        # The final instruction must be a valid CMD (regression: it used to
+        # emit a bare JSON array without the CMD keyword).
+        assert 'CMD ["echo"' in dockerfile
 
 
 # =====================================================================

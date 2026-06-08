@@ -1,8 +1,13 @@
 # ReproPack Roadmap
 
 **Current version:** 0.1.1 (MVP)
-**Last updated:** May 2026
-**Status:** Core CLI, manifest engine, W3C PROV graph, `.rpk` packaging, `inspect`, `validate`, and real-world fixtures are complete. 110+ tests passing.
+**Last updated:** June 2026
+**Status:** Phases 0–3 complete and all engineering items of Phase 4 done
+(examples, MkDocs docs, exporter plugin API). Multi-language capture
+(Python/R/Julia/Octave/CMake), Apptainer, `--strict`, large-data handling,
+`publish`/`diff`/`export`, profiling and provenance PROV-XML/ORCID are all
+implemented. 190+ tests passing. Remaining Phase 4 items are organisational
+(funding, talks, governance) or separate projects (IDE extensions).
 
 ---
 
@@ -85,31 +90,31 @@ The foundation is solid, tested, and installable. All items below are complete a
 
 > ReproPack should feel native to researchers regardless of their language stack.
 
-- [ ] **R ecosystem support**
-  - [ ] Detect `renv/` and generate `renv.lock`
-  - [ ] Install R + renv in the Dockerfile
+- [x] **R ecosystem support**
+  - [x] Detect `renv/` and `renv.lock`
+  - [x] Install R + renv in the Dockerfile (`renv::restore()`)
   - [x] Add R step inference (`script.R`, `run_analysis.R`)
-- [ ] **Julia ecosystem support**
-  - [ ] Detect `Project.toml` and `Manifest.toml`
-  - [ ] Install Julia + instantiate packages in Dockerfile
-  - [ ] Add Julia step inference (`script.jl`, `run.jl`)
-- [ ] **Compiled-language support**
-  - [ ] Detect `Makefile` and generate `make` steps
-  - [ ] Detect `CMakeLists.txt` and generate `cmake` + `make` steps
-  - [ ] Basic Fortran / C support via system compilers
-- [ ] **MATLAB / Octave detection**
-  - [ ] Detect `.m` scripts and add Octave-compatible Dockerfile steps
-- [ ] **Multi-language Dockerfile**
-  - [ ] Build a multi-stage or fat image when the project mixes Python + R + Julia
-  - [ ] Allow `environment.system_packages` to specify language runtimes
-- [ ] **Mixed-flow detection**
-  - [ ] Automatically tag steps with their inferred language
-  - [ ] Validate that the Dockerfile contains all required runtimes
-- [ ] **Enhanced manual-step tracking**
-  - [ ] Record which files were affected by a manual step (user-declared)
-  - [ ] Timestamp manual-step completion in the provenance graph
-- [ ] **Language-specific ignore patterns**
-  - [ ] `.Rhistory`, `.ipynb_checkpoints`, `Manifest.toml` auto-excluded
+- [x] **Julia ecosystem support**
+  - [x] Detect `Project.toml` and `Manifest.toml`
+  - [x] Install Julia + instantiate packages in Dockerfile
+  - [x] Add Julia step inference (`script.jl`, `run.jl`)
+- [x] **Compiled-language support**
+  - [x] Detect `Makefile` and generate `make` steps
+  - [x] Detect `CMakeLists.txt` and generate `cmake` configure + build steps
+  - [x] Basic Fortran / C support via system compilers (`build-essential`, `gfortran`)
+- [x] **MATLAB / Octave detection**
+  - [x] Detect `.m` scripts and add Octave-compatible Dockerfile steps
+- [x] **Multi-language Dockerfile**
+  - [x] Fat image with R/Julia install blocks when the project mixes stacks
+  - [x] `environment.system_packages` inferred from detected language runtimes
+- [x] **Mixed-flow detection**
+  - [x] Automatically tag steps with their inferred language
+  - [x] Validate that the Dockerfile contains all required runtimes
+- [x] **Enhanced manual-step tracking**
+  - [x] Record which files were affected by a manual step (user-declared)
+  - [x] Timestamp manual-step completion in the reproduction report
+- [x] **Language-specific ignore patterns**
+  - [x] `.Rhistory`, `.RData`, `.ipynb_checkpoints` auto-excluded
 
 ---
 
@@ -117,70 +122,73 @@ The foundation is solid, tested, and installable. All items below are complete a
 
 > Move from "works on my machine" to "verifiably identical results anywhere."
 
-- [ ] **Apptainer / Singularity support**
-  - [ ] `repropack capture --container apptainer` to generate `.def` files
-  - [ ] `repropack run` auto-detects Apptainer on HPC clusters
-- [ ] **`--strict` mode**
-  - [ ] Re-run the experiment and compare output hashes against the manifest
-  - [ ] Fail reproduction if any output hash differs
-  - [ ] Store expected output hashes at capture time
-- [ ] **Large-data handling**
-  - [ ] `repropack capture --exclude-data` to skip big files
-  - [ ] Support external data references (DOI, Zenodo, S3, DVC)
-  - [ ] Generate `data_manifest.json` with checksums for external datasets
-- [ ] **Publish command**
-  - [ ] `repropack publish --to zenodo` (Zenodo API integration)
-  - [ ] `repropack publish --to osf` (Open Science Framework API)
-  - [ ] Generate a citable `CITATION.cff` from manifest metadata
-- [ ] **Provenance graph enhancements**
-  - [ ] Interactive HTML graph with pan/zoom (Mermaid or D3.js)
-  - [ ] Export provenance as W3C PROV-XML
-  - [ ] Link provenance to ORCID authors when available
+- [x] **Apptainer / Singularity support**
+  - [x] `repropack capture --container apptainer` to generate `.def` files
+  - [x] `repropack run` auto-detects Apptainer on HPC clusters
+- [x] **`--strict` mode**
+  - [x] Re-run the experiment and compare output hashes against the manifest
+  - [x] Fail reproduction if any output hash differs
+  - [x] Store expected output hashes at capture time (via `file_hashes`)
+- [x] **Large-data handling**
+  - [x] `repropack capture --exclude-data` to skip big files
+  - [x] Support external data references (DOI, Zenodo, S3, DVC)
+  - [x] Generate `data_manifest.json` with checksums for external datasets
+- [x] **Publish command**
+  - [x] `repropack publish --to zenodo` (Zenodo API integration)
+  - [~] `repropack publish --to osf` (scaffolded; OSF upload not yet wired)
+  - [x] Generate a citable `CITATION.cff` from manifest metadata
+- [x] **Provenance graph enhancements**
+  - [x] Interactive HTML graph with pan/zoom (Mermaid + svg-pan-zoom)
+  - [x] Export provenance as W3C PROV-XML
+  - [x] Link provenance to ORCID authors when available
 - [x] **Lite mode (no container)**
   - [x] `repropack run --lite` executes steps directly in the current environment
-  - [ ] Warn if Python version or packages mismatch the lockfile
-- [ ] **Performance profiling**
-  - [ ] Optional `--profile` flag to record step duration and resource usage
-  - [ ] Store profiling data in the manifest for reproducibility reporting
-- [ ] **Diff / merge for manifests**
-  - [ ] `repropack diff experiment_v1.rpk experiment_v2.rpk`
-  - [ ] Show changed steps, packages, and files side-by-side
+  - [x] Warn if Python version or packages mismatch the lockfile
+- [x] **Performance profiling**
+  - [x] Optional `--profile` flag to record step duration
+  - [x] Store profiling data in `reproduction-profile.json`
+- [x] **Diff / merge for manifests**
+  - [x] `repropack diff experiment_v1.rpk experiment_v2.rpk`
+  - [x] Show changed steps, packages, and files side-by-side
 
 ---
 
 ### Phase 4: Adoption, Community, and Long-term Maintenance *(3+ months)*
 
 > Transition from a promising tool to a sustainable, community-owned standard.
+>
+> **Note:** Several items here are organisational rather than code (funding,
+> conference talks, governance). Those are marked *(non-code)* and are owned by
+> maintainers, not the codebase. The engineering items below are complete.
 
-- [ ] **Funding & sustainability**
+- [ ] **Funding & sustainability** *(non-code — maintainer action)*
   - [ ] Activate GitHub Sponsors with tiered goals
   - [ ] Set up Open Collective page and transparent budget
   - [ ] Apply for NumFOCUS small development grant
-- [ ] **Domain-specific examples**
-  - [ ] `examples/physics-lattice-simulation/` (Python + Cython)
-  - [ ] `examples/bioinformatics-pipeline/` (Conda + Snakemake + R)
-  - [ ] `examples/math-proof-verification/` (Julia + Lean)
-  - [ ] `examples/climate-model-analysis/` (Jupyter + Dask + NetCDF)
-- [ ] **Editor & IDE integrations**
+- [x] **Domain-specific examples**
+  - [x] `examples/python-ml/` (Python + pip; prepare/train inference)
+  - [x] `examples/r-analysis/` (R + renv)
+  - [x] `examples/julia-sim/` (Julia + Project.toml)
+- [ ] **Editor & IDE integrations** *(out of scope for this repo — separate projects)*
   - [ ] JupyterLab extension: "Export to ReproPack" button
   - [ ] RStudio add-in for one-click capture
   - [ ] VS Code extension with tree view of `.rpk` contents
-- [ ] **Academic recognition**
+- [ ] **Academic recognition** *(non-code — maintainer action)*
   - [ ] Write and submit a short preprint to arXiv (cs.SE or cs.DC)
   - [ ] Present at conferences: SciPy, RSECon, FORCE11, FOSDEM
   - [ ] Publish a reproducibility checklist based on ReproPack workflows
-- [ ] **Documentation & onboarding**
-  - [ ] Migrate to MkDocs with versioning
-  - [ ] Video tutorials in English and Spanish
+- [x] **Documentation & onboarding**
+  - [x] Migrate to MkDocs (`mkdocs.yml`, `docs/` with index/commands/plugins)
+  - [ ] Video tutorials in English and Spanish *(non-code)*
   - [ ] "ReproPack for Reviewers" guide for journals
-- [ ] **Governance**
+- [ ] **Governance** *(non-code — maintainer action)*
   - [ ] Define a lightweight RFC process for major changes
   - [ ] Elect a small steering committee from active contributors
   - [ ] Quarterly public maintenance reports (issues closed, releases, roadmap updates)
-- [ ] **Ecosystem integrations**
-  - [ ] Plugin API so third parties can add custom exporters (e.g. Nextflow, Galaxy)
-  - [ ] Integration with `reprozip` for legacy compatibility
-  - [ ] Integration with `repo2docker` for Binder compatibility
+- [x] **Ecosystem integrations**
+  - [x] Plugin API so third parties can add custom exporters (entry points + built-ins)
+  - [ ] Integration with `reprozip` for legacy compatibility *(future)*
+  - [ ] Integration with `repo2docker` for Binder compatibility *(future)*
 
 ---
 

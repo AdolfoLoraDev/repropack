@@ -161,6 +161,40 @@ def generate_conda_lock(
     return output_path
 
 
+def detect_r_renv(project_path: Path) -> Path | None:
+    """Locate an R ``renv.lock`` lockfile in the project.
+
+    Detects either a top-level ``renv.lock`` or one inside an ``renv/``
+    directory (the layout produced by ``renv::init()``).
+
+    Args:
+        project_path: Project root.
+
+    Returns:
+        Path to ``renv.lock`` if found, otherwise ``None``.
+    """
+    candidates = [project_path / "renv.lock", project_path / "renv" / "renv.lock"]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def detect_julia_project(project_path: Path) -> Path | None:
+    """Locate a Julia ``Project.toml`` in the project.
+
+    Args:
+        project_path: Project root.
+
+    Returns:
+        Path to ``Project.toml`` if found, otherwise ``None``.
+    """
+    project_toml = project_path / "Project.toml"
+    if project_toml.exists():
+        return project_toml
+    return None
+
+
 def get_python_version() -> str:
     """Get the active Python environment version."""
     result = subprocess.run(
@@ -222,6 +256,10 @@ def list_project_files(
             "node_modules",
             ".idea",
             ".vscode",
+            # Language-specific noise
+            ".Rhistory",
+            ".RData",
+            ".ipynb_checkpoints",
         ]
 
     files: list[str] = []

@@ -54,6 +54,27 @@ def capture(
         "-b",
         help="Override the Docker base image (e.g. python:3.11-slim).",
     ),
+    container: str = typer.Option(
+        "docker",
+        "--container",
+        "-c",
+        help="Container backend: docker, apptainer, or both.",
+    ),
+    exclude_data: bool = typer.Option(
+        False,
+        "--exclude-data",
+        help="Exclude large data files into data_manifest.json instead.",
+    ),
+    data_threshold_mb: float = typer.Option(
+        50.0,
+        "--data-threshold-mb",
+        help="Size threshold (MB) above which files are excluded as data.",
+    ),
+    data_ref: list[str] | None = typer.Option(
+        None,
+        "--data-ref",
+        help="Declare an external dataset as 'path=source' (DOI/Zenodo/S3/URL).",
+    ),
 ) -> None:
     """Capture a project into a reproducible .rpk package."""
     extra_steps: list[Step] = []
@@ -69,11 +90,24 @@ def capture(
             )
 
     try:
+        if container not in ("docker", "apptainer", "both"):
+            console.print(
+                f"[bold red]Error:[/bold red] invalid --container '{container}' "
+                "(choose docker, apptainer, or both)"
+            )
+            raise typer.Exit(code=1)
+        from repropack.core.data import parse_data_refs
+
+        refs = parse_data_refs(data_ref)
         result = capture_project(
             project,
             output,
             extra_steps=extra_steps or None,
             base_image=base_image,
+            container=container,
+            exclude_data=exclude_data,
+            data_threshold_mb=data_threshold_mb,
+            data_refs=refs or None,
         )
         console.print(f"[bold green]Success:[/bold green] {result}")
     except Exception as exc:
@@ -111,6 +145,22 @@ def run(
         "--no-cache",
         help="Disable Docker build cache",
     ),
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help="Verify reproduced outputs against capture-time hashes and fail on drift",
+    ),
+    container: str = typer.Option(
+        "auto",
+        "--container",
+        "-c",
+        help="Container backend: auto (Docker, fallback Apptainer), docker, apptainer.",
+    ),
+    profile: bool = typer.Option(
+        False,
+        "--profile",
+        help="Record per-step timing to reproduction-profile.json.",
+    ),
 ) -> None:
     """Reproduce a .rpk package."""
     try:
@@ -120,6 +170,9 @@ def run(
             skip_manual=skip_manual,
             lite=lite,
             no_cache=no_cache,
+            strict=strict,
+            container=container,
+            profile=profile,
         )
     except Exception as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")
@@ -139,7 +192,7 @@ def graph(
         "mermaid",
         "--format",
         "-f",
-        help="Output format: dot, mermaid, html, png",
+        help="Output format: dot, mermaid, html, png, provxml",
     ),
     output: Path = typer.Option(
         ...,
@@ -156,12 +209,8 @@ def graph(
     with zipfile.ZipFile(rpk, "r") as zf:
         prov_data = json.loads(zf.read("provenance.json"))
 
-    # Rebuild PROV document
-    from prov.model import ProvDocument
-
-    doc = ProvDocument.deserialize(content=prov_data)
-    prov = ProvenanceGraph()
-    prov.doc = doc
+    # Rebuild PROV document (avoids the serializer registry / rdflib).
+    prov = ProvenanceGraph.from_prov_json(prov_data)
 
     if format == "dot":
         text = prov.to_dot()
@@ -171,6 +220,9 @@ def graph(
         output.write_text(text, encoding="utf-8")
     elif format == "html":
         text = prov.to_html(title=f"Provenance: {rpk.name}")
+        output.write_text(text, encoding="utf-8")
+    elif format in ("provxml", "xml"):
+        text = prov.to_provxml()
         output.write_text(text, encoding="utf-8")
     elif format == "png":
         dot = prov.to_dot()
@@ -233,6 +285,151 @@ def validate(
 
 
 @app.command()
+def publish(
+    rpk: Path = typer.Argument(
+        ...,
+        help="Path to the .rpk package",
+        exists=True,
+        dir_okay=False,
+        resolve_path=True,
+    ),
+    to: str = typer.Option(
+        "citation",
+        "--to",
+        help="Publish target: citation (CITATION.cff only), zenodo, osf.",
+    ),
+    token: str | None = typer.Option(
+        None,
+        "--token",
+        help="API token (or set REPROPACK_<TARGET>_TOKEN).",
+    ),
+    sandbox: bool = typer.Option(
+        False,
+        "--sandbox",
+        help="Use the provider sandbox instance (Zenodo).",
+    ),
+) -> None:
+    """Publish a package: generate CITATION.cff and optionally deposit it."""
+    from repropack.core.publish import publish_package
+
+    try:
+        result = publish_package(rpk, to=to, token=token, sandbox=sandbox)
+        console.print(f"[bold green]CITATION.cff:[/bold green] {result['citation']}")
+        if "url" in result:
+            console.print(f"[bold green]Deposited:[/bold green] {result['url']}")
+    except Exception as exc:
+        console.print(f"[bold red]Error:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+
+@app.command()
+def diff(
+    rpk_a: Path = typer.Argument(
+        ...,
+        help="Baseline .rpk package",
+        exists=True,
+        dir_okay=False,
+        resolve_path=True,
+    ),
+    rpk_b: Path = typer.Argument(
+        ...,
+        help="Package to compare against the baseline",
+        exists=True,
+        dir_okay=False,
+        resolve_path=True,
+    ),
+) -> None:
+    """Show step, environment, package and file differences between two .rpk."""
+    from rich.table import Table
+
+    from repropack.core.diff import diff_packages
+
+    try:
+        result = diff_packages(rpk_a, rpk_b)
+    except Exception as exc:
+        console.print(f"[bold red]Error:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+    if result.identical:
+        console.print("[bold green]✔ Packages are equivalent[/bold green]")
+        return
+
+    if result.base_image_changed:
+        old, new = result.base_image_changed
+        console.print(f"[bold]Base image:[/bold] {old} [red]→[/red] {new}")
+
+    table = Table(title="Differences")
+    table.add_column("Category", style="bold")
+    table.add_column("Added", style="green")
+    table.add_column("Removed", style="red")
+    table.add_column("Changed", style="yellow")
+    table.add_row(
+        "Steps",
+        "\n".join(result.steps_added) or "-",
+        "\n".join(result.steps_removed) or "-",
+        "\n".join(result.steps_changed) or "-",
+    )
+    table.add_row(
+        "Packages",
+        "\n".join(result.packages_added) or "-",
+        "\n".join(result.packages_removed) or "-",
+        "\n".join(result.packages_changed) or "-",
+    )
+    table.add_row(
+        "Files",
+        "\n".join(result.files_added) or "-",
+        "\n".join(result.files_removed) or "-",
+        "\n".join(result.files_changed) or "-",
+    )
+    console.print(table)
+
+
+@app.command()
+def export(
+    rpk: Path = typer.Argument(
+        ...,
+        help="Path to the .rpk package",
+        exists=True,
+        dir_okay=False,
+        resolve_path=True,
+    ),
+    exporter: str | None = typer.Option(
+        None,
+        "--exporter",
+        "-e",
+        help="Exporter name (omit to list available exporters).",
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output file path.",
+        resolve_path=True,
+    ),
+) -> None:
+    """Export a .rpk via a (possibly third-party) exporter plugin."""
+    from repropack.core.plugins import get_exporter, list_exporters
+
+    if exporter is None:
+        console.print("[bold]Available exporters:[/bold]")
+        for name in list_exporters():
+            console.print(f"  - {name}")
+        return
+
+    if output is None:
+        console.print("[bold red]Error:[/bold red] --output is required")
+        raise typer.Exit(code=1)
+
+    try:
+        func = get_exporter(exporter)
+        result = func(rpk, output)
+        console.print(f"[bold green]Exported:[/bold green] {result}")
+    except Exception as exc:
+        console.print(f"[bold red]Error:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+
+@app.command()
 def version() -> None:
     """Show ReproPack version."""
     console.print(f"ReproPack [bold]{__version__}[/bold]")
@@ -243,5 +440,5 @@ def main() -> None:
     app()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

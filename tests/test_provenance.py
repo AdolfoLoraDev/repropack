@@ -380,3 +380,53 @@ class TestEdgeCases:
         """_safe_id must replace special characters."""
         prov = ProvenanceGraph()
         assert prov._safe_id("a/b.c-d") == "a_b_c_d"
+
+
+# =====================================================================
+# Phase 3 enhancements: PROV-XML, ORCID, interactive HTML, manual tracking
+# =====================================================================
+
+
+class TestProvenanceEnhancements:
+    """Tests for PROV-XML export, ORCID linking and manual-step tracking."""
+
+    def test_provxml_export(self) -> None:
+        """to_provxml must produce a PROV-XML document."""
+        prov = ProvenanceGraph()
+        prov.build_from_manifest(_make_manifest())
+        xml = prov.to_provxml()
+        assert "prov:" in xml
+        assert "document" in xml.lower()
+
+    def test_orcid_linked_when_present(self) -> None:
+        """Authors with an ORCID iD get an orcid attribute."""
+        manifest = _make_manifest()
+        manifest.metadata.authors = ["Ana Garcia <ana@x.org> (0000-0002-1825-0097)"]
+        prov = ProvenanceGraph()
+        prov.build_from_manifest(manifest)
+        assert "https://orcid.org/0000-0002-1825-0097" in prov.to_json()
+
+    def test_html_has_pan_zoom(self) -> None:
+        """Interactive HTML embeds svg-pan-zoom."""
+        prov = ProvenanceGraph()
+        prov.build_from_manifest(_make_manifest())
+        html = prov.to_html()
+        assert "svg-pan-zoom" in html
+
+    def test_manual_step_records_affected_files(self) -> None:
+        """Manual steps record their declared affected files and a flag."""
+        manifest = _make_manifest(with_steps=False)
+        manifest.steps = [
+            Step(
+                id="curate",
+                type=StepType.MANUAL,
+                description="Curate dataset",
+                instructions="Remove bad rows",
+                outputs=["data/clean.csv"],
+            )
+        ]
+        prov = ProvenanceGraph()
+        prov.build_from_manifest(manifest)
+        payload = prov.to_json()
+        assert "requires_manual_action" in payload
+        assert "data/clean.csv" in payload

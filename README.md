@@ -16,7 +16,8 @@
 - **W3C PROV provenance graph**: Tracks every step, file, and agent involved in the experiment.
 - **Declarative manifest**: Defines automatic and manual steps in `repropack.yml`.
 - **Single command**: Capture and reproduce complex experiments effortlessly.
-- **Multi-language**: Detects Python, Conda, R, shell, and Makefile targets.
+- **Multi-language**: Detects Python, Conda, R (`renv`), Julia, shell, and Makefile targets.
+- **Strict reproduction**: `repropack run --strict` re-hashes declared outputs and fails on any drift.
 - **Real base-image digests**: Resolves SHA256 digests via `docker inspect` or Docker Hub API; override with `--base-image`.
 
 ## Installation
@@ -55,6 +56,15 @@ repropack run my_experiment.rpk
 ```
 
 Unpacks, builds the Docker image (or reuses cache), and runs steps in order.
+
+To verify that the experiment reproduces bit-for-bit, add `--strict`:
+
+```bash
+repropack run my_experiment.rpk --strict
+```
+
+This re-hashes every file declared in a step's `outputs` and fails if any
+digest differs from the one recorded at capture time.
 
 ### 3. Visualize the provenance graph
 
@@ -104,16 +114,28 @@ steps:
 
 ```
 repropack/
-├── cli.py              # Typer interface (capture, run, graph)
+├── cli.py                    # Typer interface (capture, run, graph, inspect,
+│                             #   validate, diff, export, publish, version)
 ├── core/
-│   ├── capture.py      # Project capture logic
-│   ├── run.py          # Reproduction logic
-│   ├── manifest.py     # YAML manifest validation
-│   ├── provenance.py   # W3C PROV graph with NetworkX
-│   └── docker_generator.py  # Dockerfile generation
+│   ├── capture.py            # Project capture orchestrator
+│   ├── run.py                # Reproduction (Docker/Apptainer/lite, --strict, --profile)
+│   ├── manifest.py           # Pydantic YAML manifest
+│   ├── provenance.py         # W3C PROV graph (JSON, PROV-XML, Mermaid, HTML)
+│   ├── docker_generator.py   # Strict Dockerfile generation
+│   ├── apptainer_generator.py# Apptainer/Singularity .def generation
+│   ├── data.py               # Large-data exclusion & data_manifest.json
+│   ├── diff.py               # Package diffing
+│   ├── publish.py            # CITATION.cff & Zenodo deposition
+│   └── plugins.py            # Exporter plugin API (entry points)
 └── utils/
-    └── environment.py  # Environment detection (pip, conda, etc.)
+    └── environment.py        # Environment detection (pip, conda, poetry, renv, julia)
 ```
+
+## Documentation
+
+Full docs are built with MkDocs (`mkdocs serve`). See [`docs/`](docs/) for the
+[command reference](docs/commands.md) and the [plugin API](docs/plugins.md), and
+[`examples/`](examples/) for runnable sample projects.
 
 ## Development
 

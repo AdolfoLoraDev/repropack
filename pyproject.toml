@@ -31,6 +31,7 @@ dependencies = [
     "networkx>=3.0",
     "graphviz>=0.20",
     "prov>=2.0.0",
+    "lxml>=4.9.0",
     "docker>=7.0.0",
     "rich>=13.0.0",
     "packaging>=23.0",
@@ -44,6 +45,10 @@ dev = [
     "ruff>=0.1.0",
     "pre-commit>=3.4.0",
     "mypy>=1.6.0",
+]
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.0.0",
 ]
 
 [project.scripts]
@@ -79,6 +84,10 @@ ignore = ["D100", "D104", "B008"]  # Missing docstrings in __init__ modules; B00
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
+[tool.ruff.lint.per-file-ignores]
+# Test methods are self-documenting; pydocstyle is noise there.
+"tests/**" = ["D101", "D102", "D103", "D105", "D106", "D107"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
@@ -99,3 +108,10 @@ disable_error_code = ["misc"]
 [[tool.mypy.overrides]]
 module = ["networkx.*", "prov.*", "yaml.*", "graphviz.*"]
 ignore_missing_imports = true
+[[tool.mypy.overrides]]
+# Tests use pytest fixtures/parametrize (untyped decorators) and module-level
+# monkeypatching; full strictness there is noise, not safety.
+module = ["tests.*"]
+disallow_untyped_decorators = false
+warn_unused_ignores = false
+disable_error_code = ["misc", "attr-defined"]

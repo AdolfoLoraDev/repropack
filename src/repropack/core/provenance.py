@@ -8,6 +8,7 @@ entities (files, manifests, lockfiles, Dockerfiles, environments).
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,9 @@ from repropack.core.manifest import ReproPackManifest
 NAMESPACE = Namespace("repropack", "http://repropack.org/ns/prov#")
 NS_PREFIX = NAMESPACE.prefix
 
+# ORCID iD appearing in an author string, e.g. "(0000-0002-1825-0097)".
+_ORCID_RE = re.compile(r"(\d{4}-\d{4}-\d{4}-\d{3}[\dX])")
+
 
 class ProvenanceGraph:
     """W3C PROV provenance graph for a ReproPack experiment.
@@ -44,6 +48,28 @@ class ProvenanceGraph:
         self.doc = ProvDocument()
         self.doc.add_namespace(NAMESPACE)
         self._nx_graph: nx.DiGraph | None = None
+
+    @classmethod
+    def from_prov_json(cls, data: dict[str, Any]) -> ProvenanceGraph:
+        """Rebuild a graph from a PROV-JSON dict without the serializer registry.
+
+        ``ProvDocument.deserialize`` eagerly loads every serializer backend
+        (including the RDF one, which needs ``rdflib``); using the JSON
+        serializer directly avoids that optional dependency.
+
+        Args:
+            data: Parsed PROV-JSON document.
+
+        Returns:
+            A :class:`ProvenanceGraph` wrapping the deserialized document.
+        """
+        import io
+
+        from prov.serializers.provjson import ProvJSONSerializer
+
+        graph = cls()
+        graph.doc = ProvJSONSerializer().deserialize(io.StringIO(json.dumps(data)))
+        return graph
 
     def _qname(self, local: str) -> QualifiedName:
         """Generate a QualifiedName in the repropack namespace."""
@@ -146,7 +172,11 @@ class ProvenanceGraph:
 
         if manifest.metadata.authors:
             for idx, author in enumerate(manifest.metadata.authors):
-                self.add_agent(f"author_{idx}", author)
+                orcid_match = _ORCID_RE.search(author)
+                extra_agent: dict[str, Any] = {}
+                if orcid_match:
+                    extra_agent["orcid"] = f"https://orcid.org/{orcid_match.group(1)}"
+                self.add_agent(f"author_{idx}", author, **extra_agent)
 
         # --- Core entities ---------------------------------------------
         self.add_entity(
@@ -205,6 +235,16 @@ class ProvenanceGraph:
                 self._safe_id(f"output_{step.id}_{out}") for out in step.outputs
             ]
             was_informed_by = [f"step_{dep}" for dep in step.depends_on]
+            extra: dict[str, Any] = {}
+            if step.language:
+                extra["language"] = step.language
+            # Manual steps record their user-declared affected files so the
+            # provenance graph documents human interventions explicitly.
+            if step.type.value == "manual":
+                extra["requires_manual_action"] = "true"
+                affected = step.outputs or step.inputs
+                if affected:
+                    extra["affected_files"] = ", ".join(affected)
             self.add_activity(
                 f"step_{step.id}",
                 step.id,
@@ -215,6 +255,7 @@ class ProvenanceGraph:
                 step_type=step.type.value,
                 command=step.command,
                 description=step.description,
+                **extra,
             )
 
     def _safe_id(self, value: str) -> str:
@@ -248,6 +289,34 @@ class ProvenanceGraph:
             Dictionary representation of PROV-JSON.
         """
         return json.loads(self.to_json())  # type: ignore[no-any-return]
+
+    def to_provxml(self) -> str:
+        """Serialize the PROV document to W3C PROV-XML.
+
+        Returns:
+            PROV-XML string.
+
+        Raises:
+            RuntimeError: If the ``lxml`` dependency (required by the PROV-XML
+                serializer) is not installed.
+        """
+        import io
+
+        # Import the XML serializer directly rather than via
+        # ``doc.serialize(format="xml")``: the serializer registry eagerly
+        # loads every backend (including the RDF one, which needs rdflib),
+        # whereas we only require lxml here.
+        try:
+            from prov.serializers.provxml import ProvXMLSerializer
+        except ImportError as exc:
+            raise RuntimeError(
+                "PROV-XML export requires 'lxml'. Install it with "
+                "'pip install lxml'."
+            ) from exc
+
+        stream = io.StringIO()
+        ProvXMLSerializer(self.doc).serialize(stream)
+        return stream.getvalue()
 
     def to_dot(self) -> str:
         """Generate a Graphviz DOT representation of the graph.
@@ -340,25 +409,37 @@ class ProvenanceGraph:
 <head>
     <meta charset="UTF-8">
     <title>{title}</title>
+    <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
     <script type="module">
         import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-        mermaid.initialize({{ startOnLoad: true }});
+        mermaid.initialize({{ startOnLoad: false }});
+        await mermaid.run({{ querySelector: '.mermaid' }});
+        // Enable pan & zoom on the rendered SVG.
+        const svg = document.querySelector('.mermaid svg');
+        if (svg) {{
+            svg.removeAttribute('height');
+            svg.style.height = '80vh';
+            svg.style.width = '100%';
+            svgPanZoom(svg, {{ controlIconsEnabled: true, fit: true, center: true }});
+        }}
     </script>
     <style>
         body {{ font-family: sans-serif; margin: 2rem; }}
-        pre {{
+        .hint {{ color: #666; font-size: 0.9rem; }}
+        .mermaid {{
             background: #f5f5f5;
             padding: 1rem;
             border-radius: 8px;
-            overflow: auto;
+            border: 1px solid #ddd;
         }}
     </style>
 </head>
 <body>
     <h1>{title}</h1>
-    <pre class="mermaid">
+    <p class="hint">Scroll to zoom, drag to pan, use the on-canvas controls.</p>
+    <div class="mermaid">
 {mermaid_code}
-    </pre>
+    </div>
 </body>
 </html>
 """

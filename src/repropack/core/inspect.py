@@ -75,6 +75,10 @@ def inspect_package(rpk_path: Path) -> None:
         env_table.add_row("Python reqs", manifest.environment.python_requirements)
     if manifest.environment.conda_environment:
         env_table.add_row("Conda env", manifest.environment.conda_environment)
+    if manifest.environment.r_renv:
+        env_table.add_row("R renv", manifest.environment.r_renv)
+    if manifest.environment.julia_project:
+        env_table.add_row("Julia project", manifest.environment.julia_project)
     if manifest.environment.system_packages:
         env_table.add_row(
             "System packages",

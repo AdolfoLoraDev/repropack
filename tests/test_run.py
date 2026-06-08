@@ -430,3 +430,233 @@ class TestFailureCases:
         rep = Reproducer(rpk)
         with pytest.raises(ValueError, match="repropack.yml"):
             rep.run()
+
+
+# =====================================================================
+# Coverage: container backends, step execution, strict, profile
+# =====================================================================
+
+
+class _Result:
+    def __init__(
+        self, returncode: int = 0, stdout: str = "out", stderr: str = ""
+    ) -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _make_apptainer_rpk(tmp_path: Path) -> Path:
+    """Capture a package that also contains apptainer.def."""
+    from repropack.core.capture import capture_project
+
+    project = tmp_path / "apt_project"
+    project.mkdir()
+    (project / "main.py").write_text("print('x')\n")
+    # An inferred automatic step so the apptainer exec path is exercised.
+    (project / "prepare.py").write_text("print('prep')\n")
+    (project / "requirements.txt").write_text("numpy\n")
+    out = tmp_path / "apt.rpk"
+    capture_project(project, out, container="both")
+    return out
+
+
+class TestDockerStepExecution:
+    def test_run_step_in_docker_success(
+        self, tmp_path: Path, fake_subprocess: SpySubprocess, fake_docker: None
+    ) -> None:
+        rep = Reproducer(tmp_path / "x.rpk")
+        step = Step(id="s", type=StepType.AUTOMATIC, command="echo hi")
+        out = rep._run_step_in_docker(step, "img:latest", tmp_path)
+        assert out == "fake stdout"
+        assert fake_subprocess.calls[0][0] == "docker"
+
+    def test_run_step_in_docker_no_command(self, tmp_path: Path) -> None:
+        rep = Reproducer(tmp_path / "x.rpk")
+        step = Step(id="s", type=StepType.MANUAL, instructions="x")
+        with pytest.raises(ValueError, match="no command"):
+            rep._run_step_in_docker(step, "img", tmp_path)
+
+    def test_run_step_in_docker_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "repropack.core.run.subprocess.run",
+            lambda *a, **k: _Result(returncode=2, stderr="boom"),
+        )
+        rep = Reproducer(tmp_path / "x.rpk")
+        step = Step(id="s", type=StepType.AUTOMATIC, command="false")
+        with pytest.raises(RuntimeError, match="failed with code 2"):
+            rep._run_step_in_docker(step, "img", tmp_path)
+
+    def test_build_docker_failure(
+        self, tmp_path: Path, fake_docker: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import subprocess as sp
+
+        def _raise(*a: object, **k: object) -> None:
+            raise sp.CalledProcessError(1, "docker")
+
+        monkeypatch.setattr("repropack.core.run.subprocess.run", _raise)
+        rep = Reproducer(tmp_path / "x.rpk")
+        df = tmp_path / "Dockerfile"
+        df.write_text("FROM python\n")
+        ctx = tmp_path / "ctx"
+        ctx.mkdir()
+        with pytest.raises(RuntimeError, match="Error building Docker image"):
+            rep._build_docker(df, ctx, "img")
+
+
+class TestApptainerExecution:
+    def test_build_apptainer(
+        self,
+        tmp_path: Path,
+        fake_subprocess: SpySubprocess,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            "repropack.core.run.shutil.which",
+            lambda x: "/usr/bin/apptainer" if x == "apptainer" else None,
+        )
+        rep = Reproducer(tmp_path / "x.rpk")
+        ctx = tmp_path / "project"
+        ctx.mkdir()
+        defp = tmp_path / "apptainer.def"
+        defp.write_text("Bootstrap: docker\n")
+        sif = rep._build_apptainer(defp, ctx, "exp")
+        assert sif.name == "exp.sif"
+        assert fake_subprocess.calls[0][0] == "apptainer"
+
+    def test_build_apptainer_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import subprocess as sp
+
+        monkeypatch.setattr(
+            "repropack.core.run.shutil.which", lambda x: "/bin/apptainer"
+        )
+
+        def _raise(*a: object, **k: object) -> None:
+            raise sp.CalledProcessError(1, "apptainer")
+
+        monkeypatch.setattr("repropack.core.run.subprocess.run", _raise)
+        rep = Reproducer(tmp_path / "x.rpk")
+        ctx = tmp_path / "project"
+        ctx.mkdir()
+        with pytest.raises(RuntimeError, match="Error building Apptainer"):
+            rep._build_apptainer(tmp_path / "apptainer.def", ctx, "exp")
+
+    def test_run_step_in_apptainer_success(
+        self,
+        tmp_path: Path,
+        fake_subprocess: SpySubprocess,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            "repropack.core.run.shutil.which", lambda x: "/bin/apptainer"
+        )
+        rep = Reproducer(tmp_path / "x.rpk")
+        rep._sif_path = tmp_path / "exp.sif"
+        step = Step(id="s", type=StepType.AUTOMATIC, command="echo hi")
+        out = rep._run_step_in_apptainer(step, tmp_path)
+        assert out == "fake stdout"
+        assert fake_subprocess.calls[0][0] == "apptainer"
+
+    def test_run_step_in_apptainer_no_command(self, tmp_path: Path) -> None:
+        rep = Reproducer(tmp_path / "x.rpk")
+        rep._sif_path = tmp_path / "e.sif"
+        step = Step(id="s", type=StepType.MANUAL, instructions="x")
+        with pytest.raises(ValueError, match="no command"):
+            rep._run_step_in_apptainer(step, tmp_path)
+
+    def test_run_step_in_apptainer_no_image(self, tmp_path: Path) -> None:
+        rep = Reproducer(tmp_path / "x.rpk")
+        step = Step(id="s", type=StepType.AUTOMATIC, command="echo hi")
+        with pytest.raises(RuntimeError, match="image was not built"):
+            rep._run_step_in_apptainer(step, tmp_path)
+
+    def test_run_step_in_apptainer_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "repropack.core.run.shutil.which", lambda x: "/bin/apptainer"
+        )
+        monkeypatch.setattr(
+            "repropack.core.run.subprocess.run",
+            lambda *a, **k: _Result(returncode=3, stderr="bad"),
+        )
+        rep = Reproducer(tmp_path / "x.rpk")
+        rep._sif_path = tmp_path / "e.sif"
+        step = Step(id="s", type=StepType.AUTOMATIC, command="false")
+        with pytest.raises(RuntimeError, match="failed with code 3"):
+            rep._run_step_in_apptainer(step, tmp_path)
+
+    def test_full_apptainer_run(
+        self,
+        tmp_path: Path,
+        fake_subprocess: SpySubprocess,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        rpk = _make_apptainer_rpk(tmp_path)
+        monkeypatch.setattr(
+            "repropack.core.run.shutil.which",
+            lambda x: "/bin/apptainer" if x in ("apptainer", "singularity") else None,
+        )
+        rep = Reproducer(rpk, container="apptainer")
+        rep.run()
+        binaries = {c[0] for c in fake_subprocess.calls}
+        assert "apptainer" in binaries
+
+
+class TestStrictAndProfileDocker:
+    def test_verify_outputs_missing_file(self, tmp_path: Path) -> None:
+        from repropack.core.manifest import EnvironmentSpec, Metadata
+
+        manifest = ReproPackManifest(
+            metadata=Metadata(name="m"),
+            environment=EnvironmentSpec(base_image="python:3.11-slim@sha256:a"),
+            steps=[
+                Step(
+                    id="s",
+                    type=StepType.AUTOMATIC,
+                    command="true",
+                    outputs=["missing.txt"],
+                )
+            ],
+            file_hashes={"missing.txt": "a" * 64},
+        )
+        rep = Reproducer(tmp_path / "x.rpk", strict=True)
+        with pytest.raises(RuntimeError, match="missing after reproduction"):
+            rep._verify_outputs(manifest, tmp_path)
+
+    def test_verify_outputs_no_captured_hash(self, tmp_path: Path) -> None:
+        from repropack.core.manifest import EnvironmentSpec, Metadata
+
+        manifest = ReproPackManifest(
+            metadata=Metadata(name="m"),
+            environment=EnvironmentSpec(base_image="python:3.11-slim@sha256:a"),
+            steps=[
+                Step(
+                    id="s",
+                    type=StepType.AUTOMATIC,
+                    command="true",
+                    outputs=["unknown.txt"],
+                )
+            ],
+            file_hashes={},
+        )
+        rep = Reproducer(tmp_path / "x.rpk", strict=True)
+        rep._verify_outputs(manifest, tmp_path)  # no captured hash -> warn, no raise
+
+    def test_profile_in_docker_mode(
+        self,
+        tmp_path: Path,
+        fake_subprocess: SpySubprocess,
+        fake_docker: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        rpk = _make_rpk(tmp_path)
+        monkeypatch.setattr("repropack.core.run.Confirm.ask", lambda x: True)
+        rep = Reproducer(rpk, profile=True)
+        rep.run()
+        assert (rpk.parent / "reproduction-profile.json").exists()
