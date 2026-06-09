@@ -30,6 +30,32 @@ description, base image and system packages take precedence over
 auto-inference. Capture also records Git provenance (commit/branch/remote/dirty)
 and, with `SOURCE_DATE_EPOCH` set, produces byte-identical `.rpk` archives.
 
+!!! important "Capture from your project's environment"
+    When `pip-compile` (pip-tools) is not available, ReproPack falls back to
+    `pip freeze`, which captures **whatever environment is currently active** —
+    not the project's declared dependencies. Always run `repropack capture` from
+    inside the project's own virtual environment so the lockfile reflects the
+    real dependencies:
+
+    ```bash
+    python -m venv .venv && source .venv/bin/activate
+    pip install -r requirements.txt        # the project's deps
+    repropack capture -p . -o experiment.rpk
+    ```
+
+    Install `pip-tools` in that environment to get a hashed lockfile (which then
+    enables strict, `--require-hashes` installs inside the container).
+
+## Known limitations
+
+- **Apptainer `%files` and spaces.** The generated `Dockerfile` handles
+  filenames containing spaces (exec-form `COPY`), but the Apptainer `.def`
+  `%files` section does not support quoting; projects with spaces in file names
+  should prefer the Docker backend.
+- **`pip freeze` fallback.** Without `pip-compile`, lockfiles carry no hashes,
+  so the container install is a plain `pip install -r` (still pinned, but not
+  hash-verified). See the note above.
+
 ## `repropack run`
 
 Reproduce a `.rpk` package.
