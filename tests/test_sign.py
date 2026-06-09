@@ -69,8 +69,9 @@ class TestCosign:
         calls: list[list[str]] = []
         monkeypatch.setattr(sign.subprocess, "run", lambda cmd, **k: calls.append(cmd))
         sig = sign.sign_with_cosign(_rpk(tmp_path), key="cosign.key")
-        assert sig.name == "p.rpk.sig"
+        assert sig.name == "p.rpk.bundle"
         assert calls[0][:2] == ["cosign", "sign-blob"]
+        assert "--bundle" in calls[0]
         assert "--key" in calls[0]
 
     def test_sign_cosign_failure(
@@ -92,14 +93,14 @@ class TestCosign:
     ) -> None:
         monkeypatch.setattr(sign.shutil, "which", lambda x: None)
         with pytest.raises(RuntimeError, match="cosign is not installed"):
-            sign.verify_with_cosign(_rpk(tmp_path), tmp_path / "s.sig", "pub.key")
+            sign.verify_with_cosign(_rpk(tmp_path), tmp_path / "s.bundle", "pub.key")
 
     def test_verify_cosign_success(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(sign.shutil, "which", lambda x: "/usr/bin/cosign")
         monkeypatch.setattr(sign.subprocess, "run", lambda cmd, **k: None)
-        assert sign.verify_with_cosign(_rpk(tmp_path), tmp_path / "s.sig", "pub.key")
+        assert sign.verify_with_cosign(_rpk(tmp_path), tmp_path / "s.bundle", "pub.key")
 
     def test_verify_cosign_failure(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -113,4 +114,4 @@ class TestCosign:
 
         monkeypatch.setattr(sign.subprocess, "run", _boom)
         with pytest.raises(RuntimeError, match="cosign verification failed"):
-            sign.verify_with_cosign(_rpk(tmp_path), tmp_path / "s.sig", "pub.key")
+            sign.verify_with_cosign(_rpk(tmp_path), tmp_path / "s.bundle", "pub.key")

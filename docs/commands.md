@@ -104,5 +104,5 @@ written next to the package; with `--cosign` a sigstore signature is used.
 repropack sign exp.rpk                 # writes exp.rpk.attestation.json
 repropack verify exp.rpk               # checks the attestation
 repropack sign exp.rpk --cosign --key cosign.key
-repropack verify exp.rpk --cosign --signature exp.rpk.sig --key cosign.pub
+repropack verify exp.rpk --cosign --bundle exp.rpk.bundle --key cosign.pub
 ```

@@ -520,10 +520,10 @@ def verify(
         "--cosign",
         help="Verify a cosign signature instead of a SHA256 attestation.",
     ),
-    signature: Path | None = typer.Option(
+    bundle: Path | None = typer.Option(
         None,
-        "--signature",
-        help="cosign signature path (with --cosign).",
+        "--bundle",
+        help="cosign signature bundle path (with --cosign).",
     ),
     key: str | None = typer.Option(
         None,
@@ -536,13 +536,13 @@ def verify(
 
     try:
         if cosign:
-            if signature is None or key is None:
+            if bundle is None or key is None:
                 console.print(
                     "[bold red]Error:[/bold red] --cosign requires "
-                    "--signature and --key"
+                    "--bundle and --key"
                 )
                 raise typer.Exit(code=1)
-            sign_mod.verify_with_cosign(rpk, signature, str(key))
+            sign_mod.verify_with_cosign(rpk, bundle, str(key))
         else:
             sign_mod.verify_attestation(rpk, attestation)
         console.print("[bold green]✔ Verification succeeded[/bold green]")

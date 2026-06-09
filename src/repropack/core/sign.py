@@ -94,14 +94,18 @@ def cosign_available() -> bool:
 
 
 def sign_with_cosign(rpk_path: Path, key: str | None = None) -> Path:
-    """Sign a ``.rpk`` blob with cosign, producing a ``.sig`` file.
+    """Sign a ``.rpk`` blob with cosign, producing a ``.bundle`` file.
+
+    Uses cosign's ``--bundle`` output (the format required by cosign v3+, and
+    supported by v2), which packages the signature and verification material
+    together.
 
     Args:
         rpk_path: Path to the ``.rpk`` file.
         key: Optional cosign private key path (omit for keyless/OIDC signing).
 
     Returns:
-        Path to the signature file.
+        Path to the signature bundle file.
 
     Raises:
         RuntimeError: If cosign is unavailable or signing fails.
@@ -111,8 +115,8 @@ def sign_with_cosign(rpk_path: Path, key: str | None = None) -> Path:
             "cosign is not installed or not in PATH; use SHA256 attestation "
             "instead (omit --cosign)."
         )
-    sig_path = rpk_path.with_name(rpk_path.name + ".sig")
-    cmd = ["cosign", "sign-blob", "--yes", "--output-signature", str(sig_path)]
+    bundle_path = rpk_path.with_name(rpk_path.name + ".bundle")
+    cmd = ["cosign", "sign-blob", "--yes", "--bundle", str(bundle_path)]
     if key:
         cmd += ["--key", key]
     cmd.append(str(rpk_path))
@@ -120,19 +124,19 @@ def sign_with_cosign(rpk_path: Path, key: str | None = None) -> Path:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(f"cosign signing failed: {exc}") from exc
-    return sig_path
+    return bundle_path
 
 
 def verify_with_cosign(
     rpk_path: Path,
-    signature: Path,
+    bundle: Path,
     key: str,
 ) -> bool:
-    """Verify a cosign blob signature.
+    """Verify a cosign blob signature bundle.
 
     Args:
         rpk_path: Path to the ``.rpk`` file.
-        signature: Path to the ``.sig`` file.
+        bundle: Path to the ``.bundle`` produced by :func:`sign_with_cosign`.
         key: cosign public key path.
 
     Returns:
@@ -148,8 +152,8 @@ def verify_with_cosign(
         "verify-blob",
         "--key",
         key,
-        "--signature",
-        str(signature),
+        "--bundle",
+        str(bundle),
         str(rpk_path),
     ]
     try:

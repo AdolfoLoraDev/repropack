@@ -362,8 +362,8 @@ class TestSignVerifyCli:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         rpk = _capture(tmp_path)
-        sig = tmp_path / "s.sig"
-        sig.write_text("sig")
+        bundle = tmp_path / "s.bundle"
+        bundle.write_text("bundle")
         key = tmp_path / "pub.key"
         key.write_text("key")
         from repropack.core import sign as sign_mod
@@ -375,8 +375,8 @@ class TestSignVerifyCli:
                 "verify",
                 str(rpk),
                 "--cosign",
-                "--signature",
-                str(sig),
+                "--bundle",
+                str(bundle),
                 "--key",
                 str(key),
             ],
