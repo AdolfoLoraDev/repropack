@@ -18,6 +18,12 @@ repropack capture --project ./exp --output exp.rpk [options]
 | `--exclude-data` | Exclude large files into `data_manifest.json`. |
 | `--data-threshold-mb` | Size threshold for `--exclude-data` (default 50). |
 | `--data-ref` | Declare an external dataset as `path=source` (repeatable). |
+| `--allow-secrets` | Keep files flagged as secrets (excluded by default). |
+
+If the project contains a hand-authored `repropack.yml`, its steps, authors,
+description, base image and system packages take precedence over
+auto-inference. Capture also records Git provenance (commit/branch/remote/dirty)
+and, with `SOURCE_DATE_EPOCH` set, produces byte-identical `.rpk` archives.
 
 ## `repropack run`
 

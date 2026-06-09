@@ -7,7 +7,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from repropack.core.manifest import ReproPackManifest
+from repropack.core.manifest import ReproPackManifest, topological_order
 
 
 @dataclass
@@ -96,6 +96,13 @@ def validate_package(rpk_path: Path) -> ValidationResult:
             if manifest and "Dockerfile" in namelist:
                 dockerfile = zf.read("Dockerfile").decode("utf-8")
                 _check_runtimes(manifest, dockerfile, result)
+
+            # 4b. Validate the step dependency graph (cycles / unknown deps)
+            if manifest:
+                try:
+                    topological_order(manifest.steps)
+                except ValueError as exc:
+                    result.add_error(f"Invalid step dependency graph: {exc}")
 
             # 5. Detect editable installs in requirements
             if manifest and manifest.environment.python_requirements:

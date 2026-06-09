@@ -23,7 +23,12 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.prompt import Confirm
 
-from repropack.core.manifest import ReproPackManifest, Step, StepType
+from repropack.core.manifest import (
+    ReproPackManifest,
+    Step,
+    StepType,
+    topological_order,
+)
 
 console = Console()
 
@@ -344,23 +349,29 @@ class Reproducer:
         project_dir: Path,
         image_tag: str,
     ) -> None:
-        """Execute all reproduction steps in order.
+        """Execute all reproduction steps in dependency order.
+
+        Steps are topologically sorted by ``depends_on`` before execution and
+        each step's declared inputs/outputs are checked against the working
+        tree (missing ones are surfaced as warnings).
 
         Args:
             manifest: Validated manifest.
             project_dir: Path to the ``project/`` folder.
             image_tag: Docker image tag (ignored in lite mode).
         """
+        ordered = topological_order(manifest.steps)
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             console=console,
         ) as progress:
-            for step in manifest.steps:
+            for step in ordered:
                 if step.type == StepType.AUTOMATIC:
                     task = progress.add_task(
                         f"Running [cyan]{step.id}[/cyan]...", total=None
                     )
+                    self._check_inputs(step, project_dir)
                     started = time.perf_counter()
                     if self._backend == "lite":
                         output = self._run_step_lite(step, project_dir)
@@ -373,6 +384,7 @@ class Reproducer:
                         self._profile.append(
                             {"step": step.id, "seconds": round(duration, 4)}
                         )
+                    self._check_outputs(step, project_dir)
                     progress.update(task, completed=True)
                     console.print(f"[green]✔[/green] {step.id} completed")
                     if output:
@@ -465,6 +477,22 @@ class Reproducer:
         if result.stdout:
             console.print(result.stdout)
         return result.stdout
+
+    def _check_inputs(self, step: Step, project_dir: Path) -> None:
+        """Warn about declared step inputs missing before execution."""
+        for inp in step.inputs:
+            if not (project_dir / inp).exists():
+                console.print(f"[yellow]⚠ Missing input for {step.id}:[/yellow] {inp}")
+                self._report_lines.append(f"Step {step.id}: missing input {inp}")
+
+    def _check_outputs(self, step: Step, project_dir: Path) -> None:
+        """Warn about declared step outputs not produced after execution."""
+        for out in step.outputs:
+            if not (project_dir / out).exists():
+                console.print(
+                    f"[yellow]⚠ Output not produced by {step.id}:[/yellow] {out}"
+                )
+                self._report_lines.append(f"Step {step.id}: output not produced {out}")
 
     def _run_step_in_apptainer(self, step: Step, project_dir: Path) -> str:
         """Run an automatic step inside an Apptainer container.

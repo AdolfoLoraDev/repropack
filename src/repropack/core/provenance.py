@@ -195,6 +195,19 @@ class ProvenanceGraph:
             role="container_definition",
         )
 
+        # Git provenance of the captured source, when available.
+        git = manifest.metadata.git
+        if git is not None:
+            self.add_entity(
+                "source_revision",
+                git.commit,
+                role="git_revision",
+                commit=git.commit,
+                branch=git.branch or "",
+                remote=git.remote or "",
+                dirty="true" if git.dirty else "false",
+            )
+
         if manifest.environment.python_requirements:
             self.add_entity(
                 "python_requirements",

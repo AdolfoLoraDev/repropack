@@ -18,6 +18,17 @@ class StepType(str, Enum):
     MANUAL = "manual"
 
 
+class GitInfo(BaseModel):
+    """Version-control provenance of the captured project."""
+
+    commit: str = Field(..., description="Git commit SHA at capture time")
+    branch: str | None = Field(default=None, description="Current branch name")
+    remote: str | None = Field(default=None, description="origin remote URL")
+    dirty: bool = Field(
+        default=False, description="Whether the working tree had uncommitted changes"
+    )
+
+
 class Metadata(BaseModel):
     """Experiment metadata."""
 
@@ -29,6 +40,9 @@ class Metadata(BaseModel):
     authors: list[str] = Field(default_factory=list, description="Project authors")
     description: str | None = Field(
         default=None, description="Short experiment description"
+    )
+    git: GitInfo | None = Field(
+        default=None, description="Git provenance of the captured project"
     )
 
 
@@ -142,3 +156,43 @@ class ReproPackManifest(BaseModel):
     def to_file(self, path: Path) -> None:
         """Save manifest to file."""
         path.write_text(self.to_yaml(), encoding="utf-8")
+
+
+def topological_order(steps: list[Step]) -> list[Step]:
+    """Return steps ordered so every step follows its ``depends_on`` deps.
+
+    Performs a depth-first topological sort, preserving the original order as a
+    tie-breaker for independent steps.
+
+    Args:
+        steps: The manifest steps.
+
+    Returns:
+        The steps in dependency-respecting execution order.
+
+    Raises:
+        ValueError: If a dependency references an unknown step id, or the
+            dependency graph contains a cycle.
+    """
+    by_id: dict[str, Step] = {s.id: s for s in steps}
+    state: dict[str, int] = {}  # 0 = visiting, 1 = done
+    order: list[Step] = []
+
+    def _visit(step_id: str, path: list[str]) -> None:
+        current = state.get(step_id)
+        if current == 1:
+            return
+        if current == 0:
+            cycle = " -> ".join([*path, step_id])
+            raise ValueError(f"Dependency cycle detected: {cycle}")
+        state[step_id] = 0
+        for dep in by_id[step_id].depends_on:
+            if dep not in by_id:
+                raise ValueError(f"Step '{step_id}' depends on unknown step '{dep}'")
+            _visit(dep, [*path, step_id])
+        state[step_id] = 1
+        order.append(by_id[step_id])
+
+    for step in steps:
+        _visit(step.id, [])
+    return order

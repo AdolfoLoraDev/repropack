@@ -75,6 +75,11 @@ def capture(
         "--data-ref",
         help="Declare an external dataset as 'path=source' (DOI/Zenodo/S3/URL).",
     ),
+    allow_secrets: bool = typer.Option(
+        False,
+        "--allow-secrets",
+        help="Keep files flagged as secrets instead of excluding them.",
+    ),
 ) -> None:
     """Capture a project into a reproducible .rpk package."""
     extra_steps: list[Step] = []
@@ -108,6 +113,7 @@ def capture(
             exclude_data=exclude_data,
             data_threshold_mb=data_threshold_mb,
             data_refs=refs or None,
+            allow_secrets=allow_secrets,
         )
         console.print(f"[bold green]Success:[/bold green] {result}")
     except Exception as exc:

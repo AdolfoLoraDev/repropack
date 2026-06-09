@@ -143,6 +143,13 @@ The foundation is solid, tested, and installable. All items below are complete a
 - [x] **Package signing / attestation**
   - [x] `repropack sign` writes a SHA256 attestation (or cosign signature)
   - [x] `repropack verify` checks the attestation/signature
+- [x] **Deterministic packaging & integrity hardening**
+  - [x] Byte-reproducible `.rpk` (stable order, fixed mtimes, `SOURCE_DATE_EPOCH`)
+  - [x] DAG execution: topological sort by `depends_on` + cycle/unknown-dep validation
+  - [x] Honor a hand-authored `repropack.yml` (steps/metadata/environment)
+  - [x] Runtime input/output validation (warn on missing inputs/outputs)
+  - [x] Secret scanning on capture (exclude `.env`, keys, etc.; `--allow-secrets`)
+  - [x] Git provenance captured into metadata and the PROV graph
 - [x] **Provenance graph enhancements**
   - [x] Interactive HTML graph with pan/zoom (Mermaid + svg-pan-zoom)
   - [x] Export provenance as W3C PROV-XML

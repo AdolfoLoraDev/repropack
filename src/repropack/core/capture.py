@@ -9,9 +9,11 @@ final ZIP packaging.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shutil
 import tempfile
+import time
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,14 +24,17 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from repropack.core.apptainer_generator import generate_apptainer_def
 from repropack.core.data import build_data_manifest, save_data_manifest
 from repropack.core.docker_generator import generate_dockerfile, get_base_image_digest
+from repropack.core.gitinfo import get_git_info
 from repropack.core.manifest import (
     EnvironmentSpec,
+    GitInfo,
     Metadata,
     ReproPackManifest,
     Step,
     StepType,
 )
 from repropack.core.provenance import ProvenanceGraph
+from repropack.core.secrets import scan_secrets
 from repropack.utils.environment import (
     EnvType,
     detect_env_type,
@@ -43,6 +48,38 @@ from repropack.utils.environment import (
 console = Console()
 
 RPK_EXTENSION = ".rpk"
+
+# Minimum date ZIP supports; used when SOURCE_DATE_EPOCH is unset so archives
+# are still byte-stable across captures.
+_DEFAULT_ZIP_DATE = (1980, 1, 1, 0, 0, 0)
+
+
+def _source_date_epoch() -> int | None:
+    """Return the ``SOURCE_DATE_EPOCH`` value if set and valid, else ``None``."""
+    raw = os.environ.get("SOURCE_DATE_EPOCH")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def _resolve_created_at() -> datetime:
+    """Resolve the manifest timestamp, honouring ``SOURCE_DATE_EPOCH``."""
+    epoch = _source_date_epoch()
+    if epoch is not None:
+        return datetime.fromtimestamp(epoch, tz=timezone.utc)
+    return datetime.now(timezone.utc)
+
+
+def _zip_date_time() -> tuple[int, int, int, int, int, int]:
+    """Resolve the fixed ZIP entry timestamp for deterministic packaging."""
+    epoch = _source_date_epoch()
+    if epoch is None:
+        return _DEFAULT_ZIP_DATE
+    t = time.gmtime(epoch)
+    return (t.tm_year, t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec)
 
 
 class CaptureOrchestrator:
@@ -70,6 +107,7 @@ class CaptureOrchestrator:
         exclude_data: bool = False,
         data_threshold_mb: float = 50.0,
         data_refs: dict[str, str] | None = None,
+        allow_secrets: bool = False,
     ) -> None:
         """Initialize the orchestrator.
 
@@ -86,6 +124,7 @@ class CaptureOrchestrator:
             data_threshold_mb: Size threshold (in MB) for ``exclude_data``.
             data_refs: Mapping of relative path to an external data source
                 (DOI/Zenodo/S3/DVC/URL) recorded in ``data_manifest.json``.
+            allow_secrets: If ``True``, do not exclude files flagged as secrets.
         """
         self.project_path = project_path.resolve()
         self.output_path = output_path.resolve()
@@ -95,6 +134,7 @@ class CaptureOrchestrator:
         self.exclude_data = exclude_data
         self.data_threshold_bytes = int(data_threshold_mb * 1024 * 1024)
         self.data_refs = data_refs or {}
+        self.allow_secrets = allow_secrets
         self._env_type: EnvType | None = None
         self._lockfile_path: Path | None = None
         self._r_renv_path: Path | None = None
@@ -102,6 +142,9 @@ class CaptureOrchestrator:
         self._workdir: Path | None = None
         self._included_files: list[str] = []
         self._excluded_files: list[str] = []
+        self._secret_files: list[str] = []
+        self._git_info: GitInfo | None = None
+        self._user_manifest: ReproPackManifest | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -122,6 +165,8 @@ class CaptureOrchestrator:
                 TextColumn("[progress.description]{task.description}"),
                 console=console,
             ) as progress:
+                self._user_manifest = self._load_user_manifest()
+                self._git_info = get_git_info(self.project_path)
                 self._env_type = self._detect_environment(progress)
                 self._lockfile_path = self._generate_lockfile(progress)
                 self._detect_extra_languages()
@@ -207,18 +252,55 @@ class CaptureOrchestrator:
                 f"{self._julia_project_path.name}"
             )
 
+    def _load_user_manifest(self) -> ReproPackManifest | None:
+        """Load a user-authored ``repropack.yml`` from the project, if present.
+
+        When a project ships its own manifest, its steps, authors, description
+        and environment hints take precedence over auto-inference.
+
+        Returns:
+            The parsed manifest, or ``None`` if absent or invalid.
+        """
+        manifest_path = self.project_path / "repropack.yml"
+        if not manifest_path.exists():
+            return None
+        try:
+            manifest = ReproPackManifest.from_file(manifest_path)
+        except Exception as exc:  # noqa: BLE001 - tolerate a malformed file
+            console.print(f"[yellow]Ignoring invalid repropack.yml:[/yellow] {exc}")
+            return None
+        console.print(
+            "[green]Using project repropack.yml[/green] "
+            f"({len(manifest.steps)} declared step(s))"
+        )
+        return manifest
+
     def _select_files(self) -> None:
-        """Partition project files into included and excluded (large data).
+        """Partition project files into included, excluded data and secrets.
 
         When ``exclude_data`` is enabled, files larger than the configured
-        threshold are excluded from the package and recorded in
-        ``data_manifest.json``. Files declared as external ``data_refs`` are
-        always excluded regardless of size.
+        threshold are excluded and recorded in ``data_manifest.json``. Files
+        declared as external ``data_refs`` are always excluded. Files flagged
+        as secrets are dropped from the package unless ``allow_secrets`` is set.
         """
         all_files = list_project_files(self.project_path)
+
+        self._secret_files = (
+            [] if self.allow_secrets else scan_secrets(self.project_path, all_files)
+        )
+        secret_set = set(self._secret_files)
+        if self._secret_files:
+            console.print(
+                f"[bold red]Excluding {len(self._secret_files)} likely "
+                "secret file(s)[/bold red] (use --allow-secrets to keep them): "
+                + ", ".join(self._secret_files)
+            )
+
         included: list[str] = []
         excluded: list[str] = []
         for rel in all_files:
+            if rel in secret_set:
+                continue
             src = self.project_path / rel
             too_big = (
                 self.exclude_data and src.stat().st_size > self.data_threshold_bytes
@@ -237,14 +319,32 @@ class CaptureOrchestrator:
             )
 
     def _build_manifest(self) -> ReproPackManifest:
-        """Build the Pydantic-validated manifest."""
+        """Build the Pydantic-validated manifest.
+
+        Honours a user-authored ``repropack.yml`` (steps, authors, description,
+        base image and system packages) when present, falling back to
+        auto-inference otherwise. Always records the resolved base-image digest,
+        generated lockfile, Git provenance and a reproducible timestamp.
+        """
+        user = self._user_manifest
         name = self.project_path.name or "experiment"
-        metadata = Metadata(
-            name=name,
-            created_at=datetime.now(timezone.utc),
-            authors=[],
-            description=f"Reproducible package for {name}",
-        )
+        if user is not None:
+            metadata = Metadata(
+                name=user.metadata.name or name,
+                created_at=_resolve_created_at(),
+                authors=user.metadata.authors,
+                description=user.metadata.description
+                or f"Reproducible package for {name}",
+                git=self._git_info,
+            )
+        else:
+            metadata = Metadata(
+                name=name,
+                created_at=_resolve_created_at(),
+                authors=[],
+                description=f"Reproducible package for {name}",
+                git=self._git_info,
+            )
 
         env_type_value = self._env_type.value if self._env_type else "unknown"
         python_req: str | None = None
@@ -260,11 +360,20 @@ class CaptureOrchestrator:
         if not python_req and (self.project_path / "requirements.txt").exists():
             python_req = "requirements.txt"
 
-        # Resolve base image with digest when possible
+        # Resolve base image with digest. Precedence: --base-image override,
+        # then a user manifest's base image, then the default.
         if self.base_image_override:
-            resolved_image = get_base_image_digest(self.base_image_override)
+            base_image = self.base_image_override
+        elif user is not None:
+            base_image = user.environment.base_image
         else:
-            resolved_image = get_base_image_digest("python:3.11-slim")
+            base_image = "python:3.11-slim"
+        resolved_image = get_base_image_digest(base_image)
+
+        if user is not None and user.environment.system_packages:
+            system_packages = user.environment.system_packages
+        else:
+            system_packages = self._infer_system_packages()
 
         environment = EnvironmentSpec(
             base_image=resolved_image,
@@ -272,10 +381,10 @@ class CaptureOrchestrator:
             conda_environment=conda_env,
             r_renv="renv.lock" if self._r_renv_path else None,
             julia_project="Project.toml" if self._julia_project_path else None,
-            system_packages=self._infer_system_packages(),
+            system_packages=system_packages,
         )
 
-        steps = self._infer_steps()
+        steps = list(user.steps) if user is not None else self._infer_steps()
         if self.extra_steps:
             steps.extend(self.extra_steps)
 
@@ -371,12 +480,20 @@ class CaptureOrchestrator:
             # 5. Stage dependency artifacts (lockfiles, renv.lock, Julia files)
             self._stage_dependency_files(staging)
 
-            # 6. Create .rpk (zip)
+            # 6. Create .rpk (deterministic zip: stable order, fixed mtimes,
+            #    normalised permissions) so the same input yields the same bytes.
+            entries = sorted(
+                (p for p in staging.rglob("*") if p.is_file()),
+                key=lambda p: p.relative_to(staging).as_posix(),
+            )
+            date_time = _zip_date_time()
             with zipfile.ZipFile(self.output_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                for fpath in staging.rglob("*"):
-                    if fpath.is_file():
-                        arcname = fpath.relative_to(staging).as_posix()
-                        zf.write(fpath, arcname)
+                for fpath in entries:
+                    arcname = fpath.relative_to(staging).as_posix()
+                    info = zipfile.ZipInfo(arcname, date_time=date_time)
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    info.external_attr = 0o644 << 16
+                    zf.writestr(info, fpath.read_bytes())
 
         progress.update(task, completed=True)
 
@@ -594,6 +711,7 @@ def capture_project(
     exclude_data: bool = False,
     data_threshold_mb: float = 50.0,
     data_refs: dict[str, str] | None = None,
+    allow_secrets: bool = False,
 ) -> Path:
     """Capture a complete project into a ``.rpk`` package.
 
@@ -608,6 +726,7 @@ def capture_project(
         exclude_data: Exclude large files into ``data_manifest.json``.
         data_threshold_mb: Size threshold (MB) for ``exclude_data``.
         data_refs: Mapping of path to external data source.
+        allow_secrets: Keep files flagged as secrets instead of excluding them.
 
     Returns:
         Path to the generated ``.rpk`` file.
@@ -621,6 +740,7 @@ def capture_project(
         exclude_data=exclude_data,
         data_threshold_mb=data_threshold_mb,
         data_refs=data_refs,
+        allow_secrets=allow_secrets,
     )
     return orchestrator.run()
 

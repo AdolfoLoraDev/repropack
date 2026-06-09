@@ -64,6 +64,12 @@ def inspect_package(rpk_path: Path) -> None:
         "Authors",
         ", ".join(manifest.metadata.authors) or "N/A",
     )
+    if manifest.metadata.git:
+        git = manifest.metadata.git
+        dirty = " (dirty)" if git.dirty else ""
+        meta_table.add_row("Git commit", f"{git.commit[:12]}{dirty}")
+        if git.remote:
+            meta_table.add_row("Git remote", git.remote)
     console.print(meta_table)
 
     # --- Environment table --------------------------------------------
