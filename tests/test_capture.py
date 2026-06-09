@@ -312,10 +312,13 @@ class TestSnapshotManifest:
         assert "DEBIAN_FRONTEND=noninteractive" in dockerfile
         assert "RUN groupadd -r repro" in dockerfile
         assert (
-            "COPY requirements.lock /workspace/requirements.lock" in dockerfile
-            or "COPY requirements.txt /workspace/requirements.txt" in dockerfile
+            'COPY ["requirements.lock", "/workspace/requirements.lock"]' in dockerfile
+            or 'COPY ["requirements.txt", "/workspace/requirements.txt"]' in dockerfile
         )
-        assert "--require-hashes" in dockerfile
+        # The fallback lockfile (pip freeze) has no hashes, so the Dockerfile
+        # must use a plain pip install rather than --require-hashes.
+        assert "pip install --no-cache-dir -r" in dockerfile
+        assert "--require-hashes" not in dockerfile
         assert "USER repro" in dockerfile
         # The final instruction must be a valid CMD (regression: it used to
         # emit a bare JSON array without the CMD keyword).
@@ -455,13 +458,29 @@ class TestDockerGenerator:
         assert "FROM python:3.11-slim@sha256:abc" in df
 
     def test_generate_dockerfile_with_requirements(self) -> None:
-        """Must include COPY and install for requirements."""
+        """Must include COPY and a plain install by default (no hashes)."""
         env = EnvironmentSpec(
             base_image="python:3.11-slim@sha256:abc",
             python_requirements="requirements.lock",
         )
         df = generate_dockerfile(env)
-        assert "COPY requirements.lock" in df
+        assert 'COPY ["requirements.lock"' in df
+        assert "pip install --no-cache-dir -r" in df
+        assert "--require-hashes" not in df
+
+    def test_generate_dockerfile_handles_spaces_in_filenames(self) -> None:
+        """Filenames with spaces must use JSON-array COPY (regression)."""
+        env = EnvironmentSpec(base_image="python:3.11-slim@sha256:abc")
+        df = generate_dockerfile(env, project_files=["DKF Derivation.pdf"])
+        assert 'COPY ["DKF Derivation.pdf", "/workspace/DKF Derivation.pdf"]' in df
+
+    def test_generate_dockerfile_require_hashes(self) -> None:
+        """--require-hashes is emitted only when explicitly requested."""
+        env = EnvironmentSpec(
+            base_image="python:3.11-slim@sha256:abc",
+            python_requirements="requirements.lock",
+        )
+        df = generate_dockerfile(env, pip_require_hashes=True)
         assert "--require-hashes" in df
 
     def test_generate_dockerfile_with_system_packages(self) -> None:

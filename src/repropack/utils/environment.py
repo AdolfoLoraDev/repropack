@@ -223,6 +223,24 @@ def has_editable_installs(lockfile_path: Path) -> bool:
     return "-e " in text or "--editable" in text
 
 
+def lockfile_has_hashes(lockfile_path: Path) -> bool:
+    """Check whether a pip lockfile carries cryptographic hashes.
+
+    ``pip install --require-hashes`` only works when every requirement has a
+    ``--hash=`` entry (as produced by ``pip-compile --generate-hashes``). A
+    plain ``requirements.txt`` or a ``pip freeze`` fallback has none.
+
+    Args:
+        lockfile_path: Path to the lockfile.
+
+    Returns:
+        ``True`` if at least one ``--hash=`` entry is present.
+    """
+    if not lockfile_path.exists():
+        return False
+    return "--hash=" in lockfile_path.read_text(encoding="utf-8")
+
+
 def _command_exists(cmd: str) -> bool:
     """Check if a command exists in PATH."""
     return shutil.which(cmd) is not None
