@@ -16,6 +16,7 @@ def generate_apptainer_def(
     env: EnvironmentSpec,
     workdir: str = "/workspace",
     project_files: list[str] | None = None,
+    pip_require_hashes: bool = False,
 ) -> str:
     """Generate an Apptainer ``.def`` file from an environment specification.
 
@@ -27,6 +28,8 @@ def generate_apptainer_def(
         env: Environment specification.
         workdir: Working directory inside the container.
         project_files: Relative paths to copy into the image.
+        pip_require_hashes: Pass ``--require-hashes`` to pip (only when the
+            lockfile carries ``--hash=`` entries).
 
     Returns:
         Apptainer definition file content.
@@ -47,7 +50,8 @@ def generate_apptainer_def(
     if env.python_requirements:
         req = Path(env.python_requirements).name
         files.append(f"{env.python_requirements} {workdir}/{req}")
-        post.append(f"pip install --no-cache-dir --require-hashes -r {workdir}/{req}")
+        hashes = " --require-hashes" if pip_require_hashes else ""
+        post.append(f"pip install --no-cache-dir{hashes} -r {workdir}/{req}")
 
     if env.conda_environment:
         conda = Path(env.conda_environment).name

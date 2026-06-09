@@ -37,8 +37,17 @@ class TestApptainerDefGeneration:
         assert "%post" in text
         assert "%files" in text
         assert "%runscript" in text
-        assert "--require-hashes" in text
+        assert "pip install --no-cache-dir -r" in text
+        assert "--require-hashes" not in text
         assert "train.py /workspace/train.py" in text
+
+    def test_def_require_hashes(self) -> None:
+        env = EnvironmentSpec(
+            base_image="python:3.11-slim",
+            python_requirements="requirements.lock",
+        )
+        text = generate_apptainer_def(env, pip_require_hashes=True)
+        assert "--require-hashes" in text
 
     def test_def_includes_r_and_julia(self) -> None:
         env = EnvironmentSpec(

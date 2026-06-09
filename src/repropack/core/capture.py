@@ -43,6 +43,7 @@ from repropack.utils.environment import (
     generate_conda_lock,
     generate_pip_lock,
     list_project_files,
+    lockfile_has_hashes,
 )
 
 console = Console()
@@ -431,9 +432,26 @@ class CaptureOrchestrator:
         content = generate_dockerfile(
             env=manifest.environment,
             project_files=self._included_files,
+            pip_require_hashes=self._pip_require_hashes(manifest),
         )
         progress.update(task, completed=True)
         return content
+
+    def _pip_require_hashes(self, manifest: ReproPackManifest) -> bool:
+        """Whether the Python lockfile carries hashes (enables --require-hashes).
+
+        ``--require-hashes`` only works when every requirement is hashed; a
+        ``pip freeze`` fallback or a plain ``requirements.txt`` has none, in
+        which case pip would refuse to install.
+        """
+        req = manifest.environment.python_requirements
+        if not req:
+            return False
+        if self._lockfile_path is not None and req == self._lockfile_path.name:
+            candidate = self._lockfile_path
+        else:
+            candidate = self.project_path / req
+        return lockfile_has_hashes(candidate)
 
     def _build_provenance(
         self,
@@ -491,6 +509,7 @@ class CaptureOrchestrator:
                 def_content = generate_apptainer_def(
                     env=manifest.environment,
                     project_files=self._included_files,
+                    pip_require_hashes=self._pip_require_hashes(manifest),
                 )
                 (staging / "apptainer.def").write_text(def_content, encoding="utf-8")
 

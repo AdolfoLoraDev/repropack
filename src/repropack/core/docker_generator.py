@@ -122,6 +122,7 @@ def generate_dockerfile(
     env: EnvironmentSpec,
     workdir: str = "/workspace",
     project_files: list[str] | None = None,
+    pip_require_hashes: bool = False,
 ) -> str:
     """Generate a strict Dockerfile from a specification.
 
@@ -137,6 +138,8 @@ def generate_dockerfile(
         env: Environment specification.
         workdir: Working directory inside the container.
         project_files: List of relative paths to copy into the container.
+        pip_require_hashes: Pass ``--require-hashes`` to pip (only valid when the
+            lockfile contains ``--hash=`` entries; otherwise pip refuses).
 
     Returns:
         Dockerfile content as a string.
@@ -174,15 +177,25 @@ def generate_dockerfile(
             ]
         )
 
-    # Python: requirements.lock with --require-hashes
+    # Python dependencies. Use --require-hashes only when the lockfile actually
+    # carries hashes (e.g. from pip-compile --generate-hashes); otherwise pip
+    # would refuse to install at all.
     if env.python_requirements:
         req_path = Path(env.python_requirements).name
+        if pip_require_hashes:
+            comment = "# Install Python dependencies with mandatory hashes"
+            install = (
+                "RUN pip install --no-cache-dir --require-hashes "
+                f"-r {workdir}/{req_path}"
+            )
+        else:
+            comment = "# Install Python dependencies"
+            install = f"RUN pip install --no-cache-dir -r {workdir}/{req_path}"
         lines.extend(
             [
-                "# Install Python dependencies with mandatory hashes",
+                comment,
                 f"COPY {env.python_requirements} {workdir}/{req_path}",
-                "RUN pip install --no-cache-dir --require-hashes "
-                f"-r {workdir}/{req_path}",
+                install,
                 "",
             ]
         )

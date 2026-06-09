@@ -130,6 +130,21 @@ class TestApptainerConda:
 # =====================================================================
 
 
+class TestLockfileHasHashes:
+    def test_with_hashes(self, tmp_path: Path) -> None:
+        lock = tmp_path / "requirements.lock"
+        lock.write_text("numpy==1.26.0 --hash=sha256:abc\n")
+        assert env_mod.lockfile_has_hashes(lock) is True
+
+    def test_without_hashes(self, tmp_path: Path) -> None:
+        lock = tmp_path / "requirements.txt"
+        lock.write_text("numpy==1.26.0\n")
+        assert env_mod.lockfile_has_hashes(lock) is False
+
+    def test_missing_file(self, tmp_path: Path) -> None:
+        assert env_mod.lockfile_has_hashes(tmp_path / "nope.lock") is False
+
+
 class TestEnvironmentHelpers:
     def test_get_python_version(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
