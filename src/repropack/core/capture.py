@@ -82,6 +82,31 @@ def _zip_date_time() -> tuple[int, int, int, int, int, int]:
     return (t.tm_year, t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec)
 
 
+def write_deterministic_zip(staging: Path, output: Path) -> None:
+    """Write all files under ``staging`` into a byte-reproducible ZIP.
+
+    Entries are emitted in a stable (sorted) order with a fixed timestamp and
+    normalised permissions, so the same staging tree always yields identical
+    archive bytes.
+
+    Args:
+        staging: Directory whose files become the archive contents.
+        output: Destination ``.rpk``/zip path.
+    """
+    entries = sorted(
+        (p for p in staging.rglob("*") if p.is_file()),
+        key=lambda p: p.relative_to(staging).as_posix(),
+    )
+    date_time = _zip_date_time()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fpath in entries:
+            arcname = fpath.relative_to(staging).as_posix()
+            info = zipfile.ZipInfo(arcname, date_time=date_time)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o644 << 16
+            zf.writestr(info, fpath.read_bytes())
+
+
 class CaptureOrchestrator:
     """Orchestrates the capture of a project into a ``.rpk`` package.
 
@@ -108,6 +133,7 @@ class CaptureOrchestrator:
         data_threshold_mb: float = 50.0,
         data_refs: dict[str, str] | None = None,
         allow_secrets: bool = False,
+        platform: str = "linux/amd64",
     ) -> None:
         """Initialize the orchestrator.
 
@@ -125,6 +151,7 @@ class CaptureOrchestrator:
             data_refs: Mapping of relative path to an external data source
                 (DOI/Zenodo/S3/DVC/URL) recorded in ``data_manifest.json``.
             allow_secrets: If ``True``, do not exclude files flagged as secrets.
+            platform: Target container platform recorded for reproducible builds.
         """
         self.project_path = project_path.resolve()
         self.output_path = output_path.resolve()
@@ -135,6 +162,7 @@ class CaptureOrchestrator:
         self.data_threshold_bytes = int(data_threshold_mb * 1024 * 1024)
         self.data_refs = data_refs or {}
         self.allow_secrets = allow_secrets
+        self.platform = platform
         self._env_type: EnvType | None = None
         self._lockfile_path: Path | None = None
         self._r_renv_path: Path | None = None
@@ -382,6 +410,7 @@ class CaptureOrchestrator:
             r_renv="renv.lock" if self._r_renv_path else None,
             julia_project="Project.toml" if self._julia_project_path else None,
             system_packages=system_packages,
+            platform=self.platform,
         )
 
         steps = list(user.steps) if user is not None else self._infer_steps()
@@ -480,20 +509,8 @@ class CaptureOrchestrator:
             # 5. Stage dependency artifacts (lockfiles, renv.lock, Julia files)
             self._stage_dependency_files(staging)
 
-            # 6. Create .rpk (deterministic zip: stable order, fixed mtimes,
-            #    normalised permissions) so the same input yields the same bytes.
-            entries = sorted(
-                (p for p in staging.rglob("*") if p.is_file()),
-                key=lambda p: p.relative_to(staging).as_posix(),
-            )
-            date_time = _zip_date_time()
-            with zipfile.ZipFile(self.output_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                for fpath in entries:
-                    arcname = fpath.relative_to(staging).as_posix()
-                    info = zipfile.ZipInfo(arcname, date_time=date_time)
-                    info.compress_type = zipfile.ZIP_DEFLATED
-                    info.external_attr = 0o644 << 16
-                    zf.writestr(info, fpath.read_bytes())
+            # 6. Create the .rpk as a byte-reproducible archive.
+            write_deterministic_zip(staging, self.output_path)
 
         progress.update(task, completed=True)
 
@@ -712,6 +729,7 @@ def capture_project(
     data_threshold_mb: float = 50.0,
     data_refs: dict[str, str] | None = None,
     allow_secrets: bool = False,
+    platform: str = "linux/amd64",
 ) -> Path:
     """Capture a complete project into a ``.rpk`` package.
 
@@ -727,6 +745,7 @@ def capture_project(
         data_threshold_mb: Size threshold (MB) for ``exclude_data``.
         data_refs: Mapping of path to external data source.
         allow_secrets: Keep files flagged as secrets instead of excluding them.
+        platform: Target container platform recorded for reproducible builds.
 
     Returns:
         Path to the generated ``.rpk`` file.
@@ -741,6 +760,7 @@ def capture_project(
         data_threshold_mb=data_threshold_mb,
         data_refs=data_refs,
         allow_secrets=allow_secrets,
+        platform=platform,
     )
     return orchestrator.run()
 

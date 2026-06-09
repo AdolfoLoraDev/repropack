@@ -80,6 +80,11 @@ def capture(
         "--allow-secrets",
         help="Keep files flagged as secrets instead of excluding them.",
     ),
+    platform: str = typer.Option(
+        "linux/amd64",
+        "--platform",
+        help="Target container platform for reproducible builds.",
+    ),
 ) -> None:
     """Capture a project into a reproducible .rpk package."""
     extra_steps: list[Step] = []
@@ -114,6 +119,7 @@ def capture(
             data_threshold_mb=data_threshold_mb,
             data_refs=refs or None,
             allow_secrets=allow_secrets,
+            platform=platform,
         )
         console.print(f"[bold green]Success:[/bold green] {result}")
     except Exception as exc:
@@ -172,6 +178,22 @@ def run(
         "--fetch-data",
         help="Download external datasets from data_manifest.json before running.",
     ),
+    report: Path | None = typer.Option(
+        None,
+        "--report",
+        help="Write a structured run-report.json to this path.",
+        resolve_path=True,
+    ),
+    only: list[str] | None = typer.Option(
+        None,
+        "--only",
+        help="Run only this step id (repeatable).",
+    ),
+    from_step: str | None = typer.Option(
+        None,
+        "--from",
+        help="Run from this step id onwards (dependency order).",
+    ),
 ) -> None:
     """Reproduce a .rpk package."""
     try:
@@ -185,6 +207,9 @@ def run(
             container=container,
             profile=profile,
             fetch_data=fetch_data,
+            report=report,
+            only=only or None,
+            from_step=from_step,
         )
     except Exception as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")
@@ -525,6 +550,59 @@ def verify(
         raise
     except Exception as exc:
         console.print(f"[bold red]✘ Verification failed:[/bold red] {exc}")
+        raise typer.Exit(code=1) from exc
+
+
+@app.command()
+def doctor() -> None:
+    """Report which optional tooling is available on this machine."""
+    from rich.table import Table
+
+    from repropack.core.doctor import diagnose
+
+    table = Table(title="ReproPack environment")
+    table.add_column("Tool", style="bold")
+    table.add_column("Status")
+    table.add_column("Detail", style="dim")
+    for check in diagnose():
+        mark = "[green]✔[/green]" if check.ok else "[red]✘[/red]"
+        table.add_row(check.name, mark, check.detail)
+    console.print(table)
+
+
+@app.command()
+def migrate(
+    rpk: Path = typer.Argument(
+        ...,
+        help="Path to the .rpk package",
+        exists=True,
+        dir_okay=False,
+        resolve_path=True,
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output path (defaults to migrating in place).",
+        resolve_path=True,
+    ),
+) -> None:
+    """Upgrade a .rpk to the current manifest format version."""
+    from repropack.core.migrate import migrate_package
+
+    try:
+        result = migrate_package(rpk, output)
+        if result["from"] == result["to"]:
+            console.print(
+                f"[bold green]Already current[/bold green] " f"(format {result['to']})"
+            )
+        else:
+            console.print(
+                f"[bold green]Migrated[/bold green] {result['from']} "
+                f"→ {result['to']}"
+            )
+    except Exception as exc:
+        console.print(f"[bold red]Error:[/bold red] {exc}")
         raise typer.Exit(code=1) from exc
 
 

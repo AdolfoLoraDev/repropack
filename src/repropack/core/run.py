@@ -17,6 +17,7 @@ import time
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
@@ -57,6 +58,9 @@ class Reproducer:
         container: str = "auto",
         profile: bool = False,
         fetch_data: bool = False,
+        report: Path | None = None,
+        only: list[str] | None = None,
+        from_step: str | None = None,
     ) -> None:
         """Initialize the reproducer.
 
@@ -76,7 +80,12 @@ class Reproducer:
                 ``reproduction-profile.json`` next to the package.
             fetch_data: If ``True``, download external datasets declared in
                 ``data_manifest.json`` before running steps.
+            report: If set, write a structured ``run-report.json`` here.
+            only: Run only these step ids (mutually exclusive with ``from_step``).
+            from_step: Run from this step id onwards in dependency order.
         """
+        if only and from_step:
+            raise ValueError("Use only one of 'only' or 'from_step', not both")
         self.rpk_path = rpk_path.resolve()
         self.tag = tag
         self.skip_manual = skip_manual
@@ -86,10 +95,15 @@ class Reproducer:
         self.container = container
         self.profile = profile
         self.fetch_data = fetch_data
+        self.report = report
+        self.only = only
+        self.from_step = from_step
         self._backend = "lite" if lite else container
+        self._platform = "linux/amd64"
         self._sif_path: Path | None = None
         self._report_lines: list[str] = []
         self._profile: list[dict[str, float | str]] = []
+        self._step_records: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------------
     # Public API
@@ -105,6 +119,7 @@ class Reproducer:
             self._unpack(extract_dir)
             manifest = self._validate_package(extract_dir)
             image_tag = self.tag or f"repropack/{manifest.metadata.name}:latest"
+            self._platform = manifest.environment.platform
             project_dir = extract_dir / "project"
 
             if self.fetch_data:
@@ -133,6 +148,8 @@ class Reproducer:
                 self._verify_outputs(manifest, project_dir)
             if self.profile:
                 self._write_profile()
+            if self.report is not None:
+                self._write_run_report()
             self._generate_report(manifest)
 
     # ------------------------------------------------------------------
@@ -326,6 +343,7 @@ class Reproducer:
         cmd: list[str] = [
             "docker",
             "build",
+            f"--platform={self._platform}",
             "-t",
             tag,
             "-f",
@@ -360,7 +378,7 @@ class Reproducer:
             project_dir: Path to the ``project/`` folder.
             image_tag: Docker image tag (ignored in lite mode).
         """
-        ordered = topological_order(manifest.steps)
+        ordered = self._select_steps(topological_order(manifest.steps))
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -371,7 +389,7 @@ class Reproducer:
                     task = progress.add_task(
                         f"Running [cyan]{step.id}[/cyan]...", total=None
                     )
-                    self._check_inputs(step, project_dir)
+                    missing_inputs = self._check_inputs(step, project_dir)
                     started = time.perf_counter()
                     if self._backend == "lite":
                         output = self._run_step_lite(step, project_dir)
@@ -384,7 +402,17 @@ class Reproducer:
                         self._profile.append(
                             {"step": step.id, "seconds": round(duration, 4)}
                         )
-                    self._check_outputs(step, project_dir)
+                    missing_outputs = self._check_outputs(step, project_dir)
+                    self._step_records.append(
+                        {
+                            "id": step.id,
+                            "type": "automatic",
+                            "status": "completed",
+                            "seconds": round(duration, 4),
+                            "missing_inputs": missing_inputs,
+                            "missing_outputs": missing_outputs,
+                        }
+                    )
                     progress.update(task, completed=True)
                     console.print(f"[green]✔[/green] {step.id} completed")
                     if output:
@@ -415,10 +443,21 @@ class Reproducer:
                             self._report_lines.append(
                                 f"Step {step.id}: completed manually at {completed_at}"
                             )
+                            self._step_records.append(
+                                {
+                                    "id": step.id,
+                                    "type": "manual",
+                                    "status": "completed",
+                                    "completed_at": completed_at,
+                                }
+                            )
                         else:
                             console.print("[red]Reproduction stopped.[/red]")
                             self._report_lines.append(
                                 f"Step {step.id}: aborted by user"
+                            )
+                            self._step_records.append(
+                                {"id": step.id, "type": "manual", "status": "aborted"}
                             )
                             return
                     else:
@@ -427,6 +466,9 @@ class Reproducer:
                         )
                         self._report_lines.append(
                             f"Step {step.id}: skipped (--skip-manual)"
+                        )
+                        self._step_records.append(
+                            {"id": step.id, "type": "manual", "status": "skipped"}
                         )
 
         console.print("[bold green]✔ Reproduction completed.[/bold green]")
@@ -458,6 +500,7 @@ class Reproducer:
             "docker",
             "run",
             "--rm",
+            f"--platform={self._platform}",
             "-v",
             f"{project_dir.resolve()}:/workspace",
             "-w",
@@ -478,21 +521,78 @@ class Reproducer:
             console.print(result.stdout)
         return result.stdout
 
-    def _check_inputs(self, step: Step, project_dir: Path) -> None:
-        """Warn about declared step inputs missing before execution."""
+    def _check_inputs(self, step: Step, project_dir: Path) -> list[str]:
+        """Warn about declared step inputs missing before execution.
+
+        Returns:
+            The list of missing input paths.
+        """
+        missing: list[str] = []
         for inp in step.inputs:
             if not (project_dir / inp).exists():
+                missing.append(inp)
                 console.print(f"[yellow]⚠ Missing input for {step.id}:[/yellow] {inp}")
                 self._report_lines.append(f"Step {step.id}: missing input {inp}")
+        return missing
 
-    def _check_outputs(self, step: Step, project_dir: Path) -> None:
-        """Warn about declared step outputs not produced after execution."""
+    def _check_outputs(self, step: Step, project_dir: Path) -> list[str]:
+        """Warn about declared step outputs not produced after execution.
+
+        Returns:
+            The list of missing output paths.
+        """
+        missing: list[str] = []
         for out in step.outputs:
             if not (project_dir / out).exists():
+                missing.append(out)
                 console.print(
                     f"[yellow]⚠ Output not produced by {step.id}:[/yellow] {out}"
                 )
                 self._report_lines.append(f"Step {step.id}: output not produced {out}")
+        return missing
+
+    def _select_steps(self, ordered: list[Step]) -> list[Step]:
+        """Apply ``--only`` / ``--from`` filtering to the ordered steps.
+
+        Args:
+            ordered: Steps in dependency order.
+
+        Returns:
+            The filtered subset to execute.
+
+        Raises:
+            RuntimeError: If a referenced step id does not exist.
+        """
+        ids = {s.id for s in ordered}
+        if self.only:
+            unknown = [sid for sid in self.only if sid not in ids]
+            if unknown:
+                raise RuntimeError(f"--only references unknown step(s): {unknown}")
+            return [s for s in ordered if s.id in set(self.only)]
+        if self.from_step:
+            if self.from_step not in ids:
+                raise RuntimeError(f"--from references unknown step '{self.from_step}'")
+            start = next(i for i, s in enumerate(ordered) if s.id == self.from_step)
+            return ordered[start:]
+        return ordered
+
+    def _write_run_report(self) -> None:
+        """Write a structured ``run-report.json`` describing the reproduction."""
+        if self.report is None:
+            return
+        payload = {
+            "package": self.rpk_path.name,
+            "backend": self._backend,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "steps": self._step_records,
+            "warnings": [
+                line
+                for line in self._report_lines
+                if "missing" in line or "not produced" in line or "Warning" in line
+            ],
+        }
+        self.report.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        console.print(f"[green]✔ Run report written:[/green] {self.report}")
 
     def _run_step_in_apptainer(self, step: Step, project_dir: Path) -> str:
         """Run an automatic step inside an Apptainer container.
@@ -758,6 +858,9 @@ def run_package(
     container: str = "auto",
     profile: bool = False,
     fetch_data: bool = False,
+    report: Path | None = None,
+    only: list[str] | None = None,
+    from_step: str | None = None,
 ) -> None:
     """Execute a reproducible ``.rpk`` package.
 
@@ -773,6 +876,9 @@ def run_package(
         container: Container backend (``auto``, ``docker`` or ``apptainer``).
         profile: Record per-step timing to ``reproduction-profile.json``.
         fetch_data: Download external datasets before running.
+        report: Write a structured ``run-report.json`` to this path.
+        only: Run only these step ids.
+        from_step: Run from this step id onwards.
     """
     reproducer = Reproducer(
         rpk_path=rpk_path,
@@ -784,6 +890,9 @@ def run_package(
         container=container,
         profile=profile,
         fetch_data=fetch_data,
+        report=report,
+        only=only,
+        from_step=from_step,
     )
     reproducer.run()
 

@@ -69,6 +69,10 @@ class EnvironmentSpec(BaseModel):
     system_packages: list[str] = Field(
         default_factory=list, description="System packages to install"
     )
+    platform: str = Field(
+        default="linux/amd64",
+        description="Target container platform for reproducible builds",
+    )
     custom_dockerfile: str | None = Field(
         default=None, description="Custom Dockerfile if available"
     )

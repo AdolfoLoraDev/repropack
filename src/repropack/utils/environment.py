@@ -228,46 +228,94 @@ def _command_exists(cmd: str) -> bool:
     return shutil.which(cmd) is not None
 
 
+DEFAULT_IGNORE_PATTERNS = [
+    ".git",
+    "__pycache__",
+    "*.pyc",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "*.egg-info",
+    ".venv",
+    "venv",
+    ".env",
+    "node_modules",
+    ".idea",
+    ".vscode",
+    # Language-specific noise
+    ".Rhistory",
+    ".RData",
+    ".ipynb_checkpoints",
+]
+
+# Ignore files honoured at the project root (first found wins for ordering).
+_IGNORE_FILENAMES = (".repropackignore", ".gitignore")
+
+
+def _load_ignore_files(project_path: Path) -> tuple[list[str], list[str]]:
+    """Parse ``.repropackignore`` / ``.gitignore`` into (ignore, negate) lists.
+
+    Lines are gitignore-style: ``#`` comments and blanks are skipped, a leading
+    ``!`` marks a re-include (negation), and a trailing ``/`` (directory) is
+    stripped to a plain pattern.
+
+    Args:
+        project_path: Project root.
+
+    Returns:
+        A tuple ``(ignore_patterns, negate_patterns)``.
+    """
+    ignore: list[str] = []
+    negate: list[str] = []
+    for fname in _IGNORE_FILENAMES:
+        path = project_path / fname
+        if not path.exists():
+            continue
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            negated = line.startswith("!")
+            if negated:
+                line = line[1:].strip()
+            line = line.rstrip("/")
+            if not line:
+                continue
+            (negate if negated else ignore).append(line)
+    return ignore, negate
+
+
 def list_project_files(
     project_path: Path,
     ignore_patterns: list[str] | None = None,
 ) -> list[str]:
     """List relevant project files excluding noise.
 
+    On top of the supplied (or default) ignore patterns, any
+    ``.repropackignore`` or ``.gitignore`` at the project root is honoured,
+    including ``!`` negations that re-include otherwise-ignored files.
+
     Args:
         project_path: Project root.
-        ignore_patterns: Patterns to ignore (simple gitignore-style).
+        ignore_patterns: Patterns to ignore (defaults to
+            :data:`DEFAULT_IGNORE_PATTERNS`).
 
     Returns:
-        List of relative file paths.
+        Sorted list of relative file paths.
     """
     if ignore_patterns is None:
-        ignore_patterns = [
-            ".git",
-            "__pycache__",
-            "*.pyc",
-            ".pytest_cache",
-            ".mypy_cache",
-            ".ruff_cache",
-            "*.egg-info",
-            ".venv",
-            "venv",
-            ".env",
-            "node_modules",
-            ".idea",
-            ".vscode",
-            # Language-specific noise
-            ".Rhistory",
-            ".RData",
-            ".ipynb_checkpoints",
-        ]
+        ignore_patterns = DEFAULT_IGNORE_PATTERNS
+
+    extra_ignore, negate = _load_ignore_files(project_path)
+    effective_ignore = [*ignore_patterns, *extra_ignore]
 
     files: list[str] = []
     for p in project_path.rglob("*"):
         if not p.is_file():
             continue
         rel = p.relative_to(project_path).as_posix()
-        if any(_match_pattern(rel, pat) for pat in ignore_patterns):
+        ignored = any(_match_pattern(rel, pat) for pat in effective_ignore)
+        if ignored and not any(_match_pattern(rel, pat) for pat in negate):
             continue
         files.append(rel)
     return sorted(files)

@@ -150,6 +150,12 @@ The foundation is solid, tested, and installable. All items below are complete a
   - [x] Runtime input/output validation (warn on missing inputs/outputs)
   - [x] Secret scanning on capture (exclude `.env`, keys, etc.; `--allow-secrets`)
   - [x] Git provenance captured into metadata and the PROV graph
+  - [x] `.repropackignore` / `.gitignore` honoured (with `!` negations)
+  - [x] Deterministic env (`PYTHONHASHSEED`/`TZ`/`LC_ALL`) + `--platform` pinning
+  - [x] `repropack doctor` environment diagnostics
+  - [x] Structured `run --report` (per-step status/timings/warnings)
+  - [x] Partial runs: `run --only` / `run --from`
+  - [x] `repropack migrate` to upgrade `.rpk` to the current manifest format
 - [x] **Provenance graph enhancements**
   - [x] Interactive HTML graph with pan/zoom (Mermaid + svg-pan-zoom)
   - [x] Export provenance as W3C PROV-XML

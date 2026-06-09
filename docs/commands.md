@@ -19,6 +19,11 @@ repropack capture --project ./exp --output exp.rpk [options]
 | `--data-threshold-mb` | Size threshold for `--exclude-data` (default 50). |
 | `--data-ref` | Declare an external dataset as `path=source` (repeatable). |
 | `--allow-secrets` | Keep files flagged as secrets (excluded by default). |
+| `--platform` | Target container platform (default `linux/amd64`). |
+
+A `.repropackignore` or `.gitignore` at the project root is honoured (with `!`
+negations); see also `repropack doctor` for environment diagnostics and
+`repropack migrate` to upgrade an older `.rpk` to the current format.
 
 If the project contains a hand-authored `repropack.yml`, its steps, authors,
 description, base image and system packages take precedence over
@@ -39,6 +44,9 @@ Reproduce a `.rpk` package.
 | `--container, -c` | `auto` (Docker, fallback Apptainer), `docker`, `apptainer`. |
 | `--profile` | Record per-step timing to `reproduction-profile.json`. |
 | `--fetch-data` | Download external datasets from `data_manifest.json` first. |
+| `--report` | Write a structured `run-report.json` to the given path. |
+| `--only` | Run only this step id (repeatable). |
+| `--from` | Run from this step id onwards (dependency order). |
 
 ## `repropack inspect`
 
