@@ -74,7 +74,7 @@ class TestMultiLangDockerfile:
         dockerfile = generate_dockerfile(env)
         assert "r-base" in dockerfile
         assert "renv::restore" in dockerfile
-        assert "COPY renv.lock /workspace/renv.lock" in dockerfile
+        assert 'COPY ["renv.lock", "/workspace/renv.lock"]' in dockerfile
 
     def test_dockerfile_includes_julia(self) -> None:
         """Dockerfile must install Julia and instantiate when julia_project set."""
@@ -84,8 +84,8 @@ class TestMultiLangDockerfile:
         dockerfile = generate_dockerfile(env)
         assert "julia" in dockerfile
         assert "Pkg.instantiate()" in dockerfile
-        assert "COPY Project.toml /workspace/Project.toml" in dockerfile
-        assert "COPY Manifest.toml /workspace/Manifest.toml" in dockerfile
+        assert 'COPY ["Project.toml", "/workspace/Project.toml"]' in dockerfile
+        assert 'COPY ["Manifest.toml", "/workspace/Manifest.toml"]' in dockerfile
 
 
 # =====================================================================

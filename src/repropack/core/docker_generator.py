@@ -21,6 +21,15 @@ def _command_exists(cmd: str) -> bool:
     return shutil.which(cmd) is not None
 
 
+def _copy(src: str, dest: str) -> str:
+    """Emit a ``COPY`` in exec (JSON) form so paths with spaces are handled.
+
+    The shell form ``COPY a b c`` is split on whitespace by Docker, which
+    breaks for filenames containing spaces; the JSON array form does not.
+    """
+    return f"COPY {json.dumps([src, dest])}"
+
+
 def _inspect_with_docker(image: str) -> str | None:
     """Try to resolve a digest via ``docker inspect``."""
     try:
@@ -194,7 +203,7 @@ def generate_dockerfile(
         lines.extend(
             [
                 comment,
-                f"COPY {env.python_requirements} {workdir}/{req_path}",
+                _copy(env.python_requirements, f"{workdir}/{req_path}"),
                 install,
                 "",
             ]
@@ -206,7 +215,7 @@ def generate_dockerfile(
         lines.extend(
             [
                 "# Install Conda environment",
-                f"COPY {env.conda_environment} {workdir}/{conda_path}",
+                _copy(env.conda_environment, f"{workdir}/{conda_path}"),
                 "RUN conda env update -n base -f "
                 f"{workdir}/{conda_path} && conda clean -afy",
                 "",
@@ -223,7 +232,7 @@ def generate_dockerfile(
                 "    r-base && \\",
                 "    rm -rf /var/lib/apt/lists/*",
                 "RUN R -e \"install.packages('renv', repos='https://cloud.r-project.org')\"",  # noqa: E501
-                f"COPY {env.r_renv} {workdir}/{renv_path}",
+                _copy(env.r_renv, f"{workdir}/{renv_path}"),
                 f"RUN R -e \"renv::restore(lockfile='{workdir}/{renv_path}')\"",
                 "",
             ]
@@ -245,8 +254,8 @@ def generate_dockerfile(
                 '${JULIA_VERSION%.*}/julia-${JULIA_VERSION}-linux-x86_64.tar.gz"'
                 " | tar -xz -C /opt && \\",
                 "    ln -s /opt/julia-${JULIA_VERSION}/bin/julia /usr/local/bin/julia",
-                f"COPY {env.julia_project} {workdir}/{proj_path}",
-                f"COPY {manifest_name} {workdir}/{manifest_name}",
+                _copy(env.julia_project, f"{workdir}/{proj_path}"),
+                _copy(manifest_name, f"{workdir}/{manifest_name}"),
                 f"RUN julia --project={workdir} -e " '"using Pkg; Pkg.instantiate()"',
                 "",
             ]
@@ -272,7 +281,7 @@ def generate_dockerfile(
             safe = Path(f).as_posix()
             if Path(safe).name in already_copied:
                 continue
-            lines.append(f"COPY {safe} {workdir}/{safe}")
+            lines.append(_copy(safe, f"{workdir}/{safe}"))
         lines.append("")
 
     # Permissions and user
